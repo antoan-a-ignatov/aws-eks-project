@@ -1,0 +1,39 @@
+# AWS / credentials
+.aws/
+*.pem
+*credentials*
+*.env
+.env.*
+
+# eksctl / kubeconfig
+kubeconfig
+*.kubeconfig
+kubeconfig.*
+
+# Helm
+charts/*/charts/
+charts/*.tgz
+
+# Ansible
+*.retry
+.vault_pass
+
+# Terraform (leftover from old project habits, harmless to keep ignored)
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# CloudFormation packaged templates
+packaged-*.yaml
+packaged-*.yml
+
+# OS / editor
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# Logs / temp
+*.log
+tmp/
+.tmp/

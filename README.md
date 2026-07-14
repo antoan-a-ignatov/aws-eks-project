@@ -3,7 +3,9 @@
 ## Project Status
 
 [![AWS](https://img.shields.io/badge/AWS-232F3E?style=flat-square&logo=amazonaws&logoColor=white)](https://aws.amazon.com/)
+
 **Current Version:** 0.1.0
+
 **Status:** Functioning MVP. Three-tier app (frontend, API, worker) running locally and validated end to end. CI pipeline builds and pushes to ECR on every commit. EKS deployment, Kafka, and monitoring are in progress.
 
 ## Introduction
@@ -21,6 +23,7 @@ The app itself (a simple order processing flow) exists mainly as something real 
 6. [Security](#security)
 7. [Engineering Challenges and Design Decisions](#engineering-challenges-and-design-decisions)
 8. [Planned Improvements](#planned-improvements)
+9. [AI Diligence Statement](#ai-diligence-statement)
 
 ## Skills Demonstrated
 
@@ -35,6 +38,9 @@ The app itself (a simple order processing flow) exists mainly as something real 
 - Local development workflow using Docker Compose, independent of the cloud
 
 ## Architecture
+
+The application follows a simple producer/consumer pattern. A frontend calls an API service (order-service), which writes to PostgreSQL and publishes a message to Kafka. A worker service consumes that message and updates the record's status. This is intentionally minimal.
+At the infrastructure level, CloudFormation provisions the ECR repository, artifact storage, and IAM roles. A separate CloudFormation stack provisions the CI/CD pipeline itself. EKS is provisioned separately via eksctl, deliberately kept out of CloudFormation so the cluster's expensive, short lived lifecycle (created only during active work) is decoupled from the long lived resources like ECR and IAM.
 
 ```mermaid
 flowchart TB
@@ -72,9 +78,6 @@ flowchart TB
     Worker -- "updates status" --> PG
 ```
 
-The application follows a simple producer/consumer pattern. A frontend calls an API service (order-service), which writes to PostgreSQL and publishes a message to Kafka. A worker service consumes that message and updates the record's status. This is intentionally minimal.
-At the infrastructure level, CloudFormation provisions the ECR repository, artifact storage, and IAM roles. A separate CloudFormation stack provisions the CI/CD pipeline itself. EKS is provisioned separately via eksctl, deliberately kept out of CloudFormation so the cluster's expensive, short lived lifecycle (created only during active work) is decoupled from the long lived resources like ECR and IAM.
-
 ## Repository Structure
 
 ```
@@ -94,16 +97,17 @@ docker-compose.local.yml Local only stack for testing without AWS
 
 ## Technology Stack
 
-**IaC:** CloudFormation, eksctl
-**CI/CD:** CodePipeline, CodeBuild, GitHub (source, via CodeConnections)
-**Orchestration:** Amazon EKS, Helm, Kustomize
-**Messaging:** Apache Kafka
-**Secrets:** AWS Secrets Manager, External Secrets Operator, IRSA
-**Automation:** Ansible
-**Monitoring:** kube-prometheus-stack (Prometheus, Grafana, Alertmanager)
-**Logging:** Fluent Bit to CloudWatch Logs
-**Security scanning:** Checkov (IaC), TruffleHog
-**Languages/runtime:** Node.js (Express, KafkaJS), PostgreSQL
+- **IaC:** CloudFormation, eksctl
+- **CI/CD:** CodePipeline, CodeBuild, GitHub (source, via CodeConnections)
+- **Orchestration:** Amazon EKS, Helm, Kustomize
+- **Messaging:** Apache Kafka
+- **Secrets:** AWS Secrets Manager, External Secrets Operator, IRSA
+- **Automation:** Ansible
+- **Monitoring:** kube-prometheus-stack (Prometheus, Grafana, Alertmanager)
+- **Logging:** Fluent Bit to CloudWatch Logs
+- **Security scanning:** Checkov (IaC), TruffleHog
+- **Languages/runtime:** Node.js (Express, KafkaJS), PostgreSQL
+- **LLMs:** Claude, ChatGPT, Gemini
 
 ## CI/CD Pipeline
 
@@ -130,15 +134,28 @@ CI/CD IAM roles are split by responsibility. The CodeBuild role can push to ECR 
 
 ## Engineering Challenges and Design Decisions
 
-**Cost driven redesign.** The original plan assumed a larger, always available EKS setup. As it became clear the EKS control plane has no free tier at all, the project was redesigned around a minimal footprint: small on demand nodes, no NAT Gateway, no load balancer, and a strict habit of tearing the cluster down between work sessions using create/destroy scripts.
+**Cost driven redesign:**
+The original plan assumed a larger, always available EKS setup. As it became clear the EKS control plane has no free tier at all, the project was redesigned around a minimal footprint: small on demand nodes, no NAT Gateway, no load balancer, and a strict habit of tearing the cluster down between work sessions using create/destroy scripts.
 
-**AWS Free Plan instance restrictions.** New AWS accounts are limited to free tier eligible instance types unless certain conditions are met. This surfaced as a failed node group creation and required adjusting node sizing..
+**AWS Free Plan instance restrictions:** 
+New AWS accounts are limited to free tier eligible instance types unless certain conditions are met. This surfaced as a failed node group creation and required adjusting node sizing.
 
-**T3 burstable CPU credits.** T3 instances default to "unlimited" credit mode, which can bill extra if sustained CPU usage exceeds baseline. Nodes are explicitly set to "standard" mode instead, trading potential throttling for predictable cost.
+**T3 burstable CPU credits:** 
+T3 instances default to "unlimited" credit mode, which can bill extra if sustained CPU usage exceeds baseline. Nodes are explicitly set to "standard" mode instead, trading potential throttling for predictable cost.
 
-**Bitnami image deprecation.** Bitnami moved most of its container catalog behind a paid tier in 2025, breaking a planned dependency on `bitnami/kafka` for local testing. Local Kafka testing was moved to Apache's own official image instead.
+**Bitnami image deprecation:** 
+Bitnami moved most of its container catalog behind a paid tier in 2025, breaking a planned dependency on `bitnami/kafka` for local testing. Local Kafka testing was moved to Apache's own official image instead.
 
-**Licensing.** An open source reference app was initially considered for the demo application, but lacked a license file. Rather than risk redistributing unlicensed code in a public repo, a small purpose built app was written by Claude instead.
+**Licensing:** 
+An open source reference app was initially considered for the demo application, but lacked a license file. Rather than risk redistributing unlicensed code in a public repo, a small purpose-built app was written by Claude instead.
 
 ## Planned Improvements
 **LATER:** Things intentionally left out of scope for this project, such as Vault or Doppler, service mesh, Route53.
+
+## AI Diligence Statement
+
+This project is developed with the assistance of LLMs as engineering tools - Claude, ChatGPT and Gemini. They were used to augment learning, planning, execution, and problem solving, while all architectural decisions, implementation choices and final responsibility remain with me.
+
+Rather than relying on a single conversation or autonomous coding agents, the project followed a structured multi-model workflow. Different models were used for their respective strengths, with dedicated project spaces and multiple chats used where appropriate. Context was intentionally managed through project plans, handoff summaries and reusable prompts, allowing work to continue across free-tier context and usage limits without losing architectural continuity.
+
+I remain responsible for every design decision, line of code and infrastructure change included in this repository.

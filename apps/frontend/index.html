@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Order Demo</title>
+<style>
+  body { font-family: sans-serif; max-width: 600px; margin: 40px auto; }
+  form { display: flex; gap: 8px; margin-bottom: 24px; }
+  input { flex: 1; padding: 6px; }
+  button { padding: 6px 12px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px; border-bottom: 1px solid #ddd; }
+  .pending { color: #b8860b; }
+  .processed { color: #2e7d32; }
+</style>
+</head>
+<body>
+  <h1>Order Demo</h1>
+  <form id="orderForm">
+    <input id="item" placeholder="Item" required>
+    <input id="quantity" type="number" placeholder="Qty" required>
+    <button type="submit">Submit Order</button>
+  </form>
+  <table>
+    <thead><tr><th>ID</th><th>Item</th><th>Qty</th><th>Status</th></tr></thead>
+    <tbody id="orderRows"></tbody>
+  </table>
+
+  <script src="config.js"></script>
+  <script>
+    const form = document.getElementById('orderForm');
+    const rows = document.getElementById('orderRows');
+
+    async function loadOrders() {
+      const res = await fetch(`${window.API_BASE}/orders`);
+      const orders = await res.json();
+      rows.innerHTML = orders.map(o =>
+        `<tr><td>${o.id}</td><td>${o.item}</td><td>${o.quantity}</td><td class="${o.status}">${o.status}</td></tr>`
+      ).join('');
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const item = document.getElementById('item').value;
+      const quantity = document.getElementById('quantity').value;
+      await fetch(`${window.API_BASE}/orders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item, quantity: Number(quantity) }),
+      });
+      form.reset();
+      loadOrders();
+    });
+
+    loadOrders();
+    setInterval(loadOrders, 3000);
+  </script>
+</body>
+</html>

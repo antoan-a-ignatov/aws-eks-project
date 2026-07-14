@@ -1,0 +1,157 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Foundation resources for aws-eks-project (ECR, artifact bucket, IAM roles)
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: aws-eks-project
+
+  CodeConnectionArn:
+    Type: String
+    Description: ARN of the existing CodeConnections GitHub connection
+
+Resources:
+  # ECR repository with native vulnerability scanning enabled
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      #checkov:skip=CKV_AWS_136:Default AES256 encryption sufficient for this portfolio project. KMS adds cost with no added security benefit given no sensitive data
+      RepositoryName: !Ref ProjectName
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: IMMUTABLE
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # S3 bucket for CodePipeline build artifacts
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      #checkov:skip=CKV_AWS_18:Bucket only holds transient CI/CD build artifacts, no sensitive or customer data; access logging adds a second bucket and ongoing storage cost not justified for this portfolio project's scope
+      BucketName: !Sub "${ProjectName}-pipeline-artifacts-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 7
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # IAM role for CodeBuild: scoped to this project's ECR repo, this artifact bucket, and its own logs
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-codebuild-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: codebuild-least-privilege
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ProjectName}*"
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                Resource: !GetAtt ECRRepository.Arn
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetBucketLocation
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub "${ArtifactBucket.Arn}/*"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # IAM role for CodePipeline: scoped to this artifact bucket, this CodeConnection, and invoking CodeBuild
+  CodePipelineServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-codepipeline-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: codepipeline-least-privilege
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetBucketLocation
+                  - s3:GetBucketVersioning
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub "${ArtifactBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - codestar-connections:UseConnection
+                Resource: !Ref CodeConnectionArn
+              - Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                Resource: !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${ProjectName}*"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+Outputs:
+  ECRRepositoryUri:
+    Value: !GetAtt ECRRepository.RepositoryUri
+    Export:
+      Name: !Sub "${ProjectName}-ecr-uri"
+  ArtifactBucketName:
+    Value: !Ref ArtifactBucket
+    Export:
+      Name: !Sub "${ProjectName}-artifact-bucket"
+  CodeBuildRoleArn:
+    Value: !GetAtt CodeBuildServiceRole.Arn
+    Export:
+      Name: !Sub "${ProjectName}-codebuild-role-arn"
+  CodePipelineRoleArn:
+    Value: !GetAtt CodePipelineServiceRole.Arn
+    Export:
+      Name: !Sub "${ProjectName}-codepipeline-role-arn"

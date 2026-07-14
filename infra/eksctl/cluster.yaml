@@ -1,0 +1,30 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: aws-eks-project
+  region: eu-north-1
+  tags:
+    Project: aws-eks-project
+
+iam:
+  withOIDC: true
+
+vpc:
+  # Public subnets only - no NAT Gateway, cuts ~$0.045/hr + EIP charge
+  nat:
+    gateway: Disable
+
+managedNodeGroups:
+  - name: workers
+    instanceType: t3.small
+    spot: false
+    desiredCapacity: 2
+    minSize: 2
+    maxSize: 2
+    volumeSize: 20
+    privateNetworking: false
+    labels:
+      role: worker
+    tags:
+      Project: aws-eks-project

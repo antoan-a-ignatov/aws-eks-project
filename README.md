@@ -3,7 +3,9 @@
 ## Project Status
 
 [![AWS](https://img.shields.io/badge/AWS-232F3E?style=flat-square&logo=amazonaws&logoColor=white)](https://aws.amazon.com/)
+
 **Current Version:** 0.1.0
+
 **Status:** Functioning MVP. Three-tier app (frontend, API, worker) running locally and validated end to end. CI pipeline builds and pushes to ECR on every commit. EKS deployment, Kafka, and monitoring are in progress.
 
 ## Introduction
@@ -35,6 +37,9 @@ The app itself (a simple order processing flow) exists mainly as something real 
 - Local development workflow using Docker Compose, independent of the cloud
 
 ## Architecture
+
+The application follows a simple producer/consumer pattern. A frontend calls an API service (order-service), which writes to PostgreSQL and publishes a message to Kafka. A worker service consumes that message and updates the record's status. This is intentionally minimal.
+At the infrastructure level, CloudFormation provisions the ECR repository, artifact storage, and IAM roles. A separate CloudFormation stack provisions the CI/CD pipeline itself. EKS is provisioned separately via eksctl, deliberately kept out of CloudFormation so the cluster's expensive, short lived lifecycle (created only during active work) is decoupled from the long lived resources like ECR and IAM.
 
 ```mermaid
 flowchart TB
@@ -71,9 +76,6 @@ flowchart TB
     Kafka -- "consumes" --> Worker
     Worker -- "updates status" --> PG
 ```
-
-The application follows a simple producer/consumer pattern. A frontend calls an API service (order-service), which writes to PostgreSQL and publishes a message to Kafka. A worker service consumes that message and updates the record's status. This is intentionally minimal.
-At the infrastructure level, CloudFormation provisions the ECR repository, artifact storage, and IAM roles. A separate CloudFormation stack provisions the CI/CD pipeline itself. EKS is provisioned separately via eksctl, deliberately kept out of CloudFormation so the cluster's expensive, short lived lifecycle (created only during active work) is decoupled from the long lived resources like ECR and IAM.
 
 ## Repository Structure
 

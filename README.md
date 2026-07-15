@@ -149,6 +149,8 @@ Bitnami moved most of its container catalog behind a paid tier in 2025, breaking
 **Licensing:** 
 An open source reference app was initially considered for the demo application, but lacked a license file. Rather than risk redistributing unlicensed code in a public repo, a small purpose-built app was written by Claude instead.
 
+**GitHub App installation vs. authorization.** The CodeConnections GitHub link showed as "Available" and the pipeline ran once on creation, but never triggered on subsequent pushes. The cause: the AWS Connector for GitHub app was authorized but never actually installed to the repository, two distinct steps on GitHub's side. Installing it directly resolved automatic triggering.
+
 ## Planned Improvements
 **LATER:** Things intentionally left out of scope for this project, such as Vault or Doppler, service mesh, Route53.
 

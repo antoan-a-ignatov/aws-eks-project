@@ -1,0 +1,17 @@
+---
+- name: Create external-secrets namespace
+  kubernetes.core.k8s:
+    api_version: v1
+    kind: Namespace
+    name: "{{ external_secrets_namespace }}"
+
+    state: present
+
+- name: Install External Secrets Operator
+  kubernetes.core.helm:
+    name: external-secrets
+    chart_ref: external-secrets/external-secrets
+    release_namespace: "{{ external_secrets_namespace }}"
+    create_namespace: false
+    wait: true
+    chart_version: "{{ external_secrets_chart_version }}"

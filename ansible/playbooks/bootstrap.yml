@@ -1,0 +1,21 @@
+---
+- name: Bootstrap EKS add-ons
+  hosts: local
+  connection: local
+  gather_facts: false
+
+  # Explicitly load your group_vars using the playbook's directory as the base.
+  # This guarantees CodeBuild can resolve the vars even if executed from a different working directory.
+  vars_files:
+    - "{{ playbook_dir }}/../group_vars/all.yml"
+
+  pre_tasks:
+    - name: Verify variables
+      ansible.builtin.debug:
+        msg:
+          - "ESO chart: {{ external_secrets_chart_version }}"
+          - "Namespace: {{ external_secrets_namespace }}"
+
+  roles:
+    - helm-repos
+    - external-secrets

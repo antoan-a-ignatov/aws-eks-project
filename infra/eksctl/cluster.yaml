@@ -9,6 +9,13 @@ metadata:
 
 iam:
   withOIDC: true
+  serviceAccounts:
+    - metadata:
+        name: eso-db-secret-reader
+        namespace: external-secrets
+      attachPolicyARNs:
+        - arn:aws:iam::180571023536:policy/aws-eks-project-db-secret-reader
+
 
 vpc:
   # Public subnets only - no NAT Gateway, cuts ~$0.045/hr + EIP charge
@@ -28,3 +35,6 @@ managedNodeGroups:
       role: worker
     tags:
       Project: aws-eks-project
+
+addons:
+  - name: metrics-server

@@ -1,0 +1,5 @@
+---
+aws_region: eu-north-1
+external_secrets_chart_version: "0.20.1"
+external_secrets_namespace: external-secrets
+ansible_python_interpreter: "{{ lookup('pipe', 'pipx environment --value PIPX_LOCAL_VENVS') }}/ansible/bin/python"

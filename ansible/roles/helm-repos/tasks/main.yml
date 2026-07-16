@@ -1,0 +1,18 @@
+---
+- name: Verify Helm is installed
+  ansible.builtin.command: helm version --short
+  changed_when: false
+
+- name: Add metrics-server Helm repository
+  kubernetes.core.helm_repository:
+    name: metrics-server
+    repo_url: https://kubernetes-sigs.github.io/metrics-server/
+
+- name: Add external-secrets Helm repository
+  kubernetes.core.helm_repository:
+    name: external-secrets
+    repo_url: https://charts.external-secrets.io
+
+- name: Update Helm repositories
+  ansible.builtin.command: helm repo update
+  changed_when: false

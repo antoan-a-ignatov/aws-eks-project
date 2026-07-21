@@ -1,0 +1,6 @@
+apiVersion: v2
+name: postgres
+description: Minimal PostgreSQL deployment for aws-eks-project order-processing demo
+type: application
+version: 0.1.0
+appVersion: "16-alpine"

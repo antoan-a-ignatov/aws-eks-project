@@ -1,0 +1,20 @@
+image:
+  repository: postgres
+  tag: "16-alpine"
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "256Mi"
+    cpu: "250m"
+
+storage:
+  size: 1Gi
+
+database:
+  name: orderdb
+
+existingSecret: db-credentials

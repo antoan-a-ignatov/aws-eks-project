@@ -38,3 +38,6 @@ managedNodeGroups:
 
 addons:
   - name: metrics-server
+  - name: aws-ebs-csi-driver
+    wellKnownPolicies:
+      ebsCSIController: true

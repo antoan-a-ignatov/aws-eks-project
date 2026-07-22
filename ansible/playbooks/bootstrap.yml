@@ -19,3 +19,4 @@
   roles:
     - helm-repos
     - external-secrets
+    - strimzi-operator

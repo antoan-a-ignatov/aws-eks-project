@@ -1,0 +1,23 @@
+---
+- name: Add Strimzi Helm repository
+  kubernetes.core.helm_repository:
+    name: strimzi
+    repo_url: https://strimzi.io/charts/
+
+- name: Apply Strimzi CRDs (Helm does not manage CRD upgrades)
+  kubernetes.core.k8s:
+    state: present
+    src: "https://github.com/strimzi/strimzi-kafka-operator/releases/download/{{ strimzi_operator_chart_version }}/strimzi-crds-{{ strimzi_operator_chart_version }}.yaml"
+
+- name: Install Strimzi Kafka Operator
+  kubernetes.core.helm:
+    name: strimzi-kafka-operator
+    chart_ref: strimzi/strimzi-kafka-operator
+    chart_version: "{{ strimzi_operator_chart_version }}"
+    release_namespace: kafka
+    create_namespace: true
+    wait: true
+    values:
+      extraEnvs:
+        - name: STRIMZI_KUBERNETES_VERSION
+          value: "major=1,minor=34"

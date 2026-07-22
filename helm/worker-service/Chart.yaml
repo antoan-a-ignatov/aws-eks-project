@@ -1,0 +1,6 @@
+apiVersion: v2
+name: worker-service
+description: KafkaJS consumer writing orders to PostgreSQL for aws-eks-project demo
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

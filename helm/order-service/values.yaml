@@ -1,0 +1,18 @@
+image:
+  repository: ""
+  tag: "placeholder"
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "256Mi"
+    cpu: "250m"
+
+kafka:
+  brokers: "order-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
+
+service:
+  port: 3000

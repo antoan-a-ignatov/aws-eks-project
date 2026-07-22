@@ -1,0 +1,21 @@
+image:
+  repository: ""
+  tag: "placeholder"
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "256Mi"
+    cpu: "250m"
+
+kafka:
+  brokers: "order-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
+
+database:
+  host: "db-postgres.default.svc.cluster.local"
+  port: 5432
+  name: orderdb
+  existingSecret: db-credentials

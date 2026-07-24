@@ -6,7 +6,8 @@ phases:
       - echo Logging in to ECR...
       - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REPOSITORY_URI
       - COMMIT_SHA=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
-      - IMAGE_TAG=${COMMIT_SHA:-latest}
+      - BUILD_ID=$(echo $CODEBUILD_BUILD_ID | cut -d: -f2)
+      - IMAGE_TAG=${COMMIT_SHA:-latest}-${BUILD_ID}
   build:
     commands:
       - echo Building order-service image...

@@ -1,0 +1,18 @@
+image:
+  repository: ""
+  tag: "placeholder"
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    memory: "64Mi"
+    cpu: "50m"
+  limits:
+    memory: "128Mi"
+    cpu: "100m"
+
+service:
+  port: 80
+
+frontend:
+  apiBase: "http://localhost:3000"

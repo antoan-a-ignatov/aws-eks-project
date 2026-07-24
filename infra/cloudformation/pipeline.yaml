@@ -155,4 +155,5 @@ Resources:
               Configuration:
                 ProjectName: !Ref DeployProject
               InputArtifacts:
+                - Name: SourceOutput
                 - Name: BuildOutput

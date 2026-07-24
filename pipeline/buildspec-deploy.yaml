@@ -11,9 +11,9 @@ phases:
   pre_build:
     commands:
       - aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_DEFAULT_REGION"
-      - ORDER_IMAGE=$(jq -r '.["order-service"]' images.json)
-      - WORKER_IMAGE=$(jq -r '.["worker-service"]' images.json)
-      - FRONTEND_IMAGE=$(jq -r '.["frontend"]' images.json)
+      - ORDER_IMAGE=$(jq -r '.["order-service"]' $CODEBUILD_SRC_DIR_BuildOutput/images.json)
+      - WORKER_IMAGE=$(jq -r '.["worker-service"]' $CODEBUILD_SRC_DIR_BuildOutput/images.json)
+      - FRONTEND_IMAGE=$(jq -r '.["frontend"]' $CODEBUILD_SRC_DIR_BuildOutput/images.json)
   build:
     commands:
       - helm upgrade --install order-service helm/order-service --namespace default --set image.repository=$(echo $ORDER_IMAGE | cut -d: -f1) --set image.tag=$(echo $ORDER_IMAGE | cut -d: -f2)

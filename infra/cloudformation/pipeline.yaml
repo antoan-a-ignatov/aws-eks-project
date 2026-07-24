@@ -1,5 +1,5 @@
-AWSTemplateFormatVersion: '2010-09-09'
-Description: CodePipeline + CodeBuild for aws-eks-project (build stage only, deploy stage added Day 2)
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CodePipeline + CodeBuild for aws-eks-project (build and deploy stages)
 
 Parameters:
   ProjectName:
@@ -18,7 +18,6 @@ Parameters:
     Default: main
 
 Resources:
-
   BuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
@@ -45,6 +44,67 @@ Resources:
         - Key: Project
           Value: !Ref ProjectName
 
+  DeployServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-deploy-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DeployPermissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ProjectName}-deploy*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub
+                  - "arn:aws:s3:::${BucketName}/*"
+                  - BucketName: !ImportValue
+                      Fn::Sub: "${ProjectName}-artifact-bucket"
+              - Effect: Allow
+                Action:
+                  - eks:DescribeCluster
+                Resource: !Sub "arn:aws:eks:${AWS::Region}:${AWS::AccountId}:cluster/${ProjectName}"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  DeployProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${ProjectName}-deploy"
+      ServiceRole: !GetAtt DeployServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        EnvironmentVariables:
+          - Name: CLUSTER_NAME
+            Value: !Ref ProjectName
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: pipeline/buildspec-deploy.yaml
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
     Properties:
@@ -63,7 +123,7 @@ Resources:
                 Category: Source
                 Owner: AWS
                 Provider: CodeStarSourceConnection
-                Version: '1'
+                Version: "1"
               Configuration:
                 ConnectionArn: !Ref CodeConnectionArn
                 FullRepositoryId: !Ref GitHubFullRepositoryId
@@ -77,10 +137,22 @@ Resources:
                 Category: Build
                 Owner: AWS
                 Provider: CodeBuild
-                Version: '1'
+                Version: "1"
               Configuration:
                 ProjectName: !Ref BuildProject
               InputArtifacts:
                 - Name: SourceOutput
               OutputArtifacts:
+                - Name: BuildOutput
+        - Name: Deploy
+          Actions:
+            - Name: DeployToEKS
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref DeployProject
+              InputArtifacts:
                 - Name: BuildOutput

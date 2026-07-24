@@ -16,9 +16,18 @@ iam:
       attachPolicyARNs:
         - arn:aws:iam::180571023536:policy/aws-eks-project-db-secret-reader
 
+accessConfig:
+  authenticationMode: API_AND_CONFIG_MAP
+  accessEntries:
+    - principalARN: arn:aws:iam::180571023536:role/aws-eks-project-deploy-role
+      accessPolicies:
+        - policyARN: arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy
+          accessScope:
+            type: namespace
+            namespaces:
+              - default
 
 vpc:
-  # Public subnets only - no NAT Gateway, cuts ~$0.045/hr + EIP charge
   nat:
     gateway: Disable
 

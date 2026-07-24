@@ -16,6 +16,6 @@ phases:
       - FRONTEND_IMAGE=$(jq -r '.["frontend"]' $CODEBUILD_SRC_DIR_BuildOutput/images.json)
   build:
     commands:
-      - helm upgrade --install order-service helm/order-service --namespace default --set image.repository=$(echo $ORDER_IMAGE | cut -d: -f1) --set image.tag=$(echo $ORDER_IMAGE | cut -d: -f2)
-      - helm upgrade --install worker-service helm/worker-service --namespace default --set image.repository=$(echo $WORKER_IMAGE | cut -d: -f1) --set image.tag=$(echo $WORKER_IMAGE | cut -d: -f2)
-      - helm upgrade --install frontend helm/frontend --namespace default --set image.repository=$(echo $FRONTEND_IMAGE | cut -d: -f1) --set image.tag=$(echo $FRONTEND_IMAGE | cut -d: -f2)
+      - "helm upgrade --install order-service helm/order-service --namespace default --set image.repository=$(echo $ORDER_IMAGE | cut -d: -f1) --set image.tag=$(echo $ORDER_IMAGE | cut -d: -f2)"
+      - "helm upgrade --install worker-service helm/worker-service --namespace default --set image.repository=$(echo $WORKER_IMAGE | cut -d: -f1) --set image.tag=$(echo $WORKER_IMAGE | cut -d: -f2)"
+      - "helm upgrade --install frontend helm/frontend --namespace default --set image.repository=$(echo $FRONTEND_IMAGE | cut -d: -f1) --set image.tag=$(echo $FRONTEND_IMAGE | cut -d: -f2)"

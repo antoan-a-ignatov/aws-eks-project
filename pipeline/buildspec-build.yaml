@@ -6,7 +6,7 @@ phases:
       - echo Logging in to ECR...
       - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REPOSITORY_URI
       - COMMIT_SHA=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
-      - BUILD_ID=$(echo $CODEBUILD_BUILD_ID | cut -d: -f2)
+      - "BUILD_ID=$(echo $CODEBUILD_BUILD_ID | cut -d: -f2)"
       - IMAGE_TAG=${COMMIT_SHA:-latest}-${BUILD_ID}
   build:
     commands:
@@ -22,9 +22,9 @@ phases:
       - docker push $ECR_REPOSITORY_URI:order-service-$IMAGE_TAG
       - docker push $ECR_REPOSITORY_URI:worker-service-$IMAGE_TAG
       - docker push $ECR_REPOSITORY_URI:frontend-$IMAGE_TAG
-      - printf '{"order-service":"%s","worker-service":"%s","frontend":"%s"}' \
-        "$ECR_REPOSITORY_URI:order-service-$IMAGE_TAG" \
-        "$ECR_REPOSITORY_URI:worker-service-$IMAGE_TAG" \
+      - printf '{"order-service":"%s","worker-service":"%s","frontend":"%s"}'
+        "$ECR_REPOSITORY_URI:order-service-$IMAGE_TAG"
+        "$ECR_REPOSITORY_URI:worker-service-$IMAGE_TAG"
         "$ECR_REPOSITORY_URI:frontend-$IMAGE_TAG" > images.json
 
 artifacts:

@@ -16,3 +16,9 @@ kafka:
 
 service:
   port: 3000
+
+database:
+  host: "db-postgres.default.svc.cluster.local"
+  port: 5432
+  name: orderdb
+  existingSecret: db-credentials

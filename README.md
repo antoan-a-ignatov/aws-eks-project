@@ -4,9 +4,9 @@
 
 [![AWS](https://img.shields.io/badge/AWS-232F3E?style=flat-square&logo=amazonaws&logoColor=white)](https://aws.amazon.com/)
 
-**Current Version:** 0.2.0
+**Current Version:** 0.3.0
 
-**Status:** Core platform infrastructure is live and verified on EKS: secrets sync from AWS Secrets Manager through IRSA and External Secrets Operator, PostgreSQL is running with synced credentials, and a single-node Kafka cluster (Strimzi, KRaft mode) is up with a working topic. App services (order-service, worker-service, frontend) and the pipeline's deploy stage are next. The three-tier app still runs locally via docker-compose for fast iteration.
+**Status:** The full pipeline is live and green end to end. A push to `main` builds three images (order-service, worker-service, frontend), and a separate Deploy stage installs all three via Helm against the live EKS cluster, using the exact image tags the Build stage produced. All five workloads (PostgreSQL, Kafka, order-service, worker-service, frontend) have run together successfully and the full order flow has been verified through the deployed app, not just locally. The app is intentionally not publicly exposed; access is via `kubectl port-forward`, and a recorded walkthrough is planned in place of a live demo, consistent with the project's no-ALB, no-public-exposure design.
 
 ## Introduction
 
@@ -71,7 +71,7 @@ flowchart TB
     Repo -- "push to main" --> CP
     CP --> CB
     CB -- "build + push, tag = git SHA" --> ECR
-    ECR -. "deploy stage (planned)" .-> API
+    ECR -- "deploy stage" --> API
 
     FE --> API
     API -- "writes" --> PG
@@ -81,6 +81,28 @@ flowchart TB
     Secrets -.-> API
     Secrets -.-> PG
 ```
+
+### Demo
+
+The flow below runs locally via `docker-compose.local.yml`, the same three-tier architecture described above.
+
+![Frontend with no orders yet](docs/screenshots/frontend-empty.png)
+
+Frontend on first load, before any orders exist.
+
+![Order just submitted, pending status](docs/screenshots/frontend-pending.png)
+
+Right after submitting an order. The status reflects order-service's initial write, before worker-service has consumed the Kafka message.
+
+![Order shown as processed](docs/screenshots/frontend-processed.png)
+
+The same order moments later, updated by worker-service after consuming the message from Kafka and writing the new status to PostgreSQL.
+
+![Kafka produce and consume in the logs](docs/screenshots/frontend-processed-logs.png)
+
+The underlying mechanism: order-service producing to the `orders` topic, worker-service consuming it independently.
+
+The app is intentionally not exposed publicly on AWS (see Network Exposure), so a recorded walkthrough of this same flow running on the live EKS cluster is planned in place of a live link.
 
 ## Repository Structure
 
@@ -118,7 +140,13 @@ docker-compose.local.yml Local only stack for testing without AWS
 A push to `main` triggers CodePipeline via a CodeConnections link to GitHub. The pipeline currently has two stages:
 1. **Source:** pulls the latest commit from GitHub
 2. **Build:** CodeBuild builds the order-service Docker image and pushes it to ECR, tagged with the short git commit SHA (not `latest`, since the ECR repository enforces immutable tags)
-**LATER:** Deploy stage (separate CodeBuild project, Helm-based deployment to EKS, only runs while a cluster exists)
+3. **Deploy:** a separate CodeBuild project, with its own IAM role that has no ECR access at all, reads the image tags the Build stage produced and runs `helm upgrade --install` for order-service, worker-service, and frontend against the live cluster. The two stages share the pipeline's artifact store, with the Deploy stage taking both the built image manifest and the full source (for the Helm charts) as separate input artifacts.
+
+All three app images are built from a single ECR repository, differentiated by tag prefix (`order-service-`, `worker-service-`, `frontend-`) rather than separate repositories, since the project only needs one. Image tags combine the short git SHA with the CodeBuild build ID, so manually re-running a pipeline execution against the same commit never collides with ECR's immutable tag setting.
+
+![CodePipeline: Source, Build, and Deploy all succeeded](docs/screenshots/pipeline.png)
+
+![ECR repository showing the three tagged images](docs/screenshots/ecr-images.png)
 
 ## Security
 
@@ -134,11 +162,11 @@ CI/CD IAM roles are split by responsibility. The CodeBuild role can push to ECR 
 
 IRSA is also used for in-cluster AWS access. The External Secrets Operator's Kubernetes service account is bound to a dedicated IAM role through eksctl's `iam.serviceAccounts` config, scoped to a single Secrets Manager ARN, so the role's whole lifecycle is created and destroyed with the cluster instead of being managed by hand.
 
-**LATER:** IRSA, deploy role access into EKS
+The Deploy stage's CodeBuild role has an IAM permission to describe the cluster, but IAM alone doesn't grant it anything inside Kubernetes. An EKS access entry, declared in the eksctl cluster config, is what actually authorizes that role to act inside the cluster, scoped to edit permissions in the `default` namespace only, not cluster-admin. IAM and Kubernetes RBAC are separate systems here, deliberately: IAM decides who's allowed in, the access entry decides what they can do once inside.
 
 ### Network Exposure
 
-**LATER:** How the app is reachable
+The app is reachable only via `kubectl port-forward`, not a public endpoint. This was a deliberate choice, not a limitation worked around later: exposing the frontend and order-service via NodePort with a node's public IP was considered as a way to demo the project live from any machine, but rejected, since it would mean opening inbound access on infrastructure that's otherwise intentionally closed, for a benefit that's better served by a recorded walkthrough. A `scripts/port-forward.sh` script forwards both the frontend and order-service locally, matching the same `localhost` addressing already proven in `docker-compose.local.yml`.
 
 ## Engineering Challenges and Design Decisions
 
@@ -172,6 +200,16 @@ An open source reference app was initially considered for the demo application, 
 **teardown.sh scoped too broadly.** The teardown script was deleting the CloudFormation foundation stack (ECR, S3, IAM) on every run, not just the EKS cluster. This stayed hidden until CloudFormation's own export-dependency protection blocked a delete and surfaced the mistake. Fixed by scoping teardown.sh to only the eksctl-managed cluster, with foundation/pipeline stack removal left as a separate, deliberate script reserved for final cleanup.
 
 **Postgres data does not persist across sessions.** Postgres runs on an EBS-backed PVC, which gets destroyed along with the cluster on every teardown, by design, since the cluster itself only exists during active work blocks. Accepted deliberately: a demo dataset doesn't need to survive between sessions, and keeping storage ephemeral avoids extra EBS spend on top of the compute budget.
+
+**Rebuilding the cluster does not restore supporting infrastructure.** `eksctl` recreates nodes, addons, and the EKS access entry, but ESO, the secrets sync, PostgreSQL, and Kafka all have to be reapplied by hand every session, since none of them are addons. This stayed implicit until a full pipeline run failed against a freshly rebuilt cluster with nothing but bare nodes on it. Fixed with `scripts/deploy-infra.sh`, which reapplies all of it in the correct order, with explicit wait conditions so the app layer can never race ahead of dependencies it needs.
+
+**Unquoted colons broke buildspec YAML twice.** A shell command like `cut -d: -f1` contains a colon immediately followed by a space, which YAML's plain scalar syntax treats as an ambiguous mapping key, not literal text. This surfaced first in the Deploy stage's buildspec, then again in the Build stage's buildspec when a later fix reintroduced the same pattern without quoting. Fixed by wrapping any buildspec command containing a bare `: ` in double quotes, and validating buildspecs with an actual YAML parser rather than eyeballing them going forward.
+
+**A quiet bug found while re-checking a different one.** While verifying the colon-quoting fix with an actual parser instead of trusting it by eye, a second, unrelated bug turned up in the same file: a multi-line `printf` command relied on shell backslash line continuation, but CodeBuild's buildspec YAML folds multi-line list items into a single line before the shell ever sees them, turning the continuation backslashes into literal stray characters. That silently prepended a leading space to every image URI written into the pipeline's output artifact. Caught and fixed in the same pass as the colon issue, rather than discovering it later as a second, separate failure.
+
+**CodePipeline needs an explicit primary source with multiple input artifacts.** The Deploy stage needs both the built image manifest and the repository's Helm charts, so it was given two input artifacts. CodeBuild silently failed to find its own buildspec until `PrimarySource` was set explicitly, telling CodePipeline which of the two artifacts to check out as the working directory.
+
+**order-service's real dependency didn't match its documented one.** The architecture describes order-service as Kafka-producer-only, with no database access. In practice, the code connects to PostgreSQL on startup regardless. This only surfaced once the app was actually deployed and crash-looping, not from a code review. The Helm chart was updated to match what the application actually does, rather than changing the app to match the diagram.
 
 **GitHub App installation vs. authorization.** The CodeConnections GitHub link showed as "Available" and the pipeline ran once on creation, but never triggered on subsequent pushes. The cause: the AWS Connector for GitHub app was authorized but never actually installed to the repository, two distinct steps on GitHub's side. Installing it directly resolved automatic triggering.
 

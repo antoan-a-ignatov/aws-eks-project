@@ -1,0 +1,9 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - pip install checkov==3.3.8
+  build:
+    commands:
+      - checkov -f infra/cloudformation/foundation.yaml

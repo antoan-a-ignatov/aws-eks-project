@@ -105,12 +105,169 @@ Resources:
         - Key: Project
           Value: !Ref ProjectName
 
+  TrufflehogServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-trufflehog-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: TrufflehogPermissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ProjectName}-trufflehog*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub
+                  - "arn:aws:s3:::${BucketName}/*"
+                  - BucketName: !ImportValue
+                      Fn::Sub: "${ProjectName}-artifact-bucket"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  TrufflehogProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${ProjectName}-trufflehog"
+      ServiceRole: !GetAtt TrufflehogServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: pipeline/buildspec-trufflehog.yaml
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  SemgrepServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-semgrep-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SemgrepPermissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ProjectName}-semgrep*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub
+                  - "arn:aws:s3:::${BucketName}/*"
+                  - BucketName: !ImportValue
+                      Fn::Sub: "${ProjectName}-artifact-bucket"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  SemgrepProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${ProjectName}-semgrep"
+      ServiceRole: !GetAtt SemgrepServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: pipeline/buildspec-semgrep.yaml
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  CheckovServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-checkov-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CheckovPermissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ProjectName}-checkov*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub
+                  - "arn:aws:s3:::${BucketName}/*"
+                  - BucketName: !ImportValue
+                      Fn::Sub: "${ProjectName}-artifact-bucket"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  CheckovProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${ProjectName}-checkov"
+      ServiceRole: !GetAtt CheckovServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: pipeline/buildspec-checkov.yaml
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
     Properties:
       Name: !Sub "${ProjectName}-pipeline"
       RoleArn: !ImportValue
         Fn::Sub: "${ProjectName}-codepipeline-role-arn"
+      PipelineType: V2
       ArtifactStore:
         Type: S3
         Location: !ImportValue
@@ -128,7 +285,43 @@ Resources:
                 ConnectionArn: !Ref CodeConnectionArn
                 FullRepositoryId: !Ref GitHubFullRepositoryId
                 BranchName: !Ref GitHubBranch
+                DetectChanges: 'true'
               OutputArtifacts:
+                - Name: SourceOutput
+        - Name: SecurityScans
+          Actions:
+            - Name: TruffleHog
+              RunOrder: 1
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref TrufflehogProject
+              InputArtifacts:
+                - Name: SourceOutput
+            - Name: Semgrep
+              RunOrder: 1
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref SemgrepProject
+              InputArtifacts:
+                - Name: SourceOutput
+            - Name: Checkov
+              RunOrder: 1
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref CheckovProject
+              InputArtifacts:
                 - Name: SourceOutput
         - Name: Build
           Actions:
@@ -158,3 +351,15 @@ Resources:
               InputArtifacts:
                 - Name: SourceOutput
                 - Name: BuildOutput
+      Triggers:
+        - ProviderType: CodeStarSourceConnection
+          GitConfiguration:
+            SourceActionName: GitHubSource
+            Push:
+              - Branches:
+                  Includes:
+                    - !Ref GitHubBranch
+                FilePaths:
+                  Excludes:
+                    - "docs/**"
+                    - "*.md"

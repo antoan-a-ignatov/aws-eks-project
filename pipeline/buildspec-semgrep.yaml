@@ -1,0 +1,19 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - pipx install semgrep==1.135.0
+      - yum install -y jq
+  build:
+    commands:
+      - semgrep --config=p/javascript --config=p/security-audit --metrics=off --json --output=/tmp/semgrep-api-worker.json apps/api apps/worker
+      - semgrep --config=p/javascript --metrics=off --json --output=/tmp/semgrep-frontend.json apps/frontend
+      - cat /tmp/semgrep-api-worker.json /tmp/semgrep-frontend.json
+      - |
+        ERROR_COUNT=$(jq '[.results[] | select(.extra.severity == "ERROR")] | length' /tmp/semgrep-api-worker.json /tmp/semgrep-frontend.json | paste -sd+ | bc)
+        echo "ERROR-severity findings: $ERROR_COUNT"
+        if [ "$ERROR_COUNT" -gt 0 ]; then
+          echo "Blocking: ERROR-severity Semgrep finding(s) present"
+          exit 1
+        fi

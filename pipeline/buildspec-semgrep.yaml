@@ -3,7 +3,7 @@ version: 0.2
 phases:
   install:
     commands:
-      - pipx install semgrep==1.135.0
+      - pip install semgrep==1.135.0
       - yum install -y jq
   build:
     commands:

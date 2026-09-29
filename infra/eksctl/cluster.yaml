@@ -33,7 +33,7 @@ vpc:
 
 managedNodeGroups:
   - name: workers
-    instanceType: t3.small
+    instanceType: t3.medium
     spot: false
     desiredCapacity: 2
     minSize: 2

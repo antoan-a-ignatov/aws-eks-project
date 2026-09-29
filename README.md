@@ -2,7 +2,14 @@
 
 ## Project Status
 
-[![AWS](https://img.shields.io/badge/AWS-232F3E?style=flat-square&logo=amazonaws&logoColor=white)](https://aws.amazon.com/)
+[![AWS](https://custom-icon-badges.demolab.com/badge/AWS-%23FF9900.svg?logo=aws&logoColor=white)](https://aws.amazon.com/)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io/)
+[![Kafka](https://img.shields.io/badge/Kafka-231F20?style=flat-square&logo=apachekafka&logoColor=white)](https://kafka.apache.org/)
+[![Helm](https://img.shields.io/badge/Helm-0F1689?style=flat-square&logo=helm&logoColor=white)](https://helm.sh/)
+<!--
+[![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?style=flat-square&logo=prometheus&logoColor=white)](https://prometheus.io/)
+[![Grafana](https://img.shields.io/badge/Grafana-F46800?style=flat-square&logo=grafana&logoColor=white)](https://grafana.com/)
+-->
 
 **Current Version:** 0.3.0
 
@@ -112,11 +119,12 @@ infra/eksctl/            EKS cluster configuration
 pipeline/                CodeBuild buildspecs
 ansible/                 Cluster add-on bootstrap playbooks
 helm/                    Helm charts for each service
-k8s/overlays/            Kustomize overlays (dev/prod)
+k8s/base/                Base manifests (secrets, storage, Kafka)
+k8s/overlays/            Kustomize overlays (dev/prod, not yet built)
 apps/api/                order-service (producer)
 apps/worker/             worker-service (consumer)
 apps/frontend/           Static frontend
-scripts/                 teardown.sh, rebuild.sh
+scripts/                 rebuild.sh, deploy-infra.sh, teardown.sh, verify-teardown.sh, port-forward.sh
 docs/                    Diagrams and design decision notes
 docker-compose.local.yml Local only stack for testing without AWS
 ```
@@ -213,8 +221,19 @@ An open source reference app was initially considered for the demo application, 
 
 **GitHub App installation vs. authorization.** The CodeConnections GitHub link showed as "Available" and the pipeline ran once on creation, but never triggered on subsequent pushes. The cause: the AWS Connector for GitHub app was authorized but never actually installed to the repository, two distinct steps on GitHub's side. Installing it directly resolved automatic triggering.
 
+**Helm release naming redundancy, left as-is.** Chart name and release name happen to match for several services (`order-service`, `frontend`), producing redundant resource names like `order-service-order-service` and `frontend-frontend`. Purely cosmetic, no functional impact, and fixing it would mean touching every chart's naming convention for zero real benefit. A deliberate call not to spend time on it given the project's scope and remaining priorities.
+
 ## Planned Improvements
-**LATER:** Things intentionally left out of scope for this project, such as Vault or Doppler, service mesh, Route53.
+
+- **Multi-account Landing Zone** (AWS Organizations, Control Tower, SCPs): intentionally out of scope. This project runs in a single account by design; a landing zone is an org-governance pattern that doesn't fit a single-cluster, cost-constrained demo project. Worth a separate, dedicated project rather than bolting it onto this one.
+- **OPA/Gatekeeper or Kyverno**: policy-as-code admission control (block root containers, enforce resource limits), a natural next step for cluster-level governance.
+- **kube-bench**: CIS Kubernetes benchmark checks against the cluster, not implemented due to time scope.
+- **Vault or Doppler**: alternative/complementary secrets backends to Secrets Manager.
+- **Service mesh** (Istio, Linkerd): mTLS and traffic policy between services.
+- **Route53**: DNS management, not needed at this project's scale.
+- **ECR lifecycle policy**: expire untagged and old images automatically. Several debugging sessions left behind stray image tags with no cleanup, similar to the lifecycle rule already applied to the S3 artifact bucket.
+- **Automated orphaned-volume cleanup**: an EBS volume tied to PostgreSQL's PVC has been left behind by `eksctl delete cluster` more than once. `scripts/verify-teardown.sh` currently detects this manually; folding detection and cleanup directly into `teardown.sh` would remove the manual step.
+- **Node size**: currently `t3.small`. A bump to `t3.medium` is planned once the kube-prometheus-stack monitoring workload is added, since current memory usage already sits around 85% per node without it.
 
 ## AI Diligence Statement
 

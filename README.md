@@ -35,6 +35,7 @@ The app itself (a simple order processing flow) exists mainly as something real 
 ## Skills Demonstrated
 
 - IaC with CloudFormation, including automated security scanning with Checkov
+- Automated pipeline security scanning across secrets, application code, and infrastructure (TruffleHog, Semgrep, Checkov), running in parallel
 - AWS native CI/CD pipeline design (CodePipeline, CodeBuild) with GitHub as the source
 - Container orchestration on EKS
 - Kubernetes manifest management with Helm and Kustomize
@@ -114,19 +115,27 @@ The app is intentionally not exposed publicly on AWS (see Network Exposure), so 
 ## Repository Structure
 
 ```
-infra/cloudformation/    CloudFormation templates (foundation resources, pipeline)
-infra/eksctl/            EKS cluster configuration
-pipeline/                CodeBuild buildspecs
-ansible/                 Cluster add-on bootstrap playbooks
-helm/                    Helm charts for each service
-k8s/base/                Base manifests (secrets, storage, Kafka)
-k8s/overlays/            Kustomize overlays (dev/prod, not yet built)
-apps/api/                order-service (producer)
-apps/worker/             worker-service (consumer)
-apps/frontend/           Static frontend
-scripts/                 rebuild.sh, deploy-infra.sh, teardown.sh, verify-teardown.sh, port-forward.sh
-docs/                    Diagrams and design decision notes
-docker-compose.local.yml Local only stack for testing without AWS
+.
+├── ansible/                 Cluster add-on bootstrap playbooks
+├── apps/
+│   ├── api/                 order-service (producer)
+│   ├── frontend/            Static frontend
+│   └── worker/              worker-service (consumer)
+├── docs/                    Diagrams and design decision notes
+├── helm/
+│   ├── frontend/            Helm chart for frontend
+│   ├── order-service/       Helm chart for order-service
+│   ├── postgres/            Helm chart for in-cluster Postgres
+│   └── worker-service/      Helm chart for worker-service
+├── infra/
+│   ├── cloudformation/      CloudFormation templates (foundation resources, pipeline)
+│   └── eksctl/              EKS cluster configuration
+├── k8s/
+│   ├── base/                Base manifests (secrets, storage, Kafka)
+│   └── overlays/            Kustomize overlays (dev/prod, not yet built)
+├── pipeline/                CodeBuild buildspecs (build, deploy, security scans)
+├── scripts/                 rebuild.sh, deploy-infra.sh, deploy-pipeline.sh, teardown.sh, verify-teardown.sh, port-forward.sh
+└── docker-compose.local.yml Local only stack for testing without AWS
 ```
 
 ## Technology Stack
@@ -139,16 +148,17 @@ docker-compose.local.yml Local only stack for testing without AWS
 - **Automation:** Ansible
 - **Monitoring:** kube-prometheus-stack (Prometheus, Grafana, Alertmanager)
 - **Logging:** Fluent Bit to CloudWatch Logs
-- **Security scanning:** Checkov (IaC), TruffleHog
+- **Security scanning:** Checkov (IaC), TruffleHog (secrets), Semgrep (application code)
 - **Languages/runtime:** Node.js (Express, KafkaJS), PostgreSQL
 - **LLMs:** Claude, ChatGPT, Gemini
 
 ## CI/CD Pipeline
 
-A push to `main` triggers CodePipeline via a CodeConnections link to GitHub. The pipeline currently has two stages:
-1. **Source:** pulls the latest commit from GitHub
-2. **Build:** CodeBuild builds the order-service Docker image and pushes it to ECR, tagged with the short git commit SHA (not `latest`, since the ECR repository enforces immutable tags)
-3. **Deploy:** a separate CodeBuild project, with its own IAM role that has no ECR access at all, reads the image tags the Build stage produced and runs `helm upgrade --install` for order-service, worker-service, and frontend against the live cluster. The two stages share the pipeline's artifact store, with the Deploy stage taking both the built image manifest and the full source (for the Helm charts) as separate input artifacts.
+A push to `main` triggers CodePipeline via a CodeConnections link to GitHub. The pipeline has four stages:
+1. **Source:** pulls the latest commit from GitHub. `DetectChanges: 'true'` is set explicitly rather than relying on the default, and the pipeline runs on CodePipeline V2 with path and branch filtered triggers, so pushes that only touch `docs/` or markdown files skip a full run.
+2. **SecurityScans:** three CodeBuild projects run in parallel, each with its own least privilege IAM role limited to log writes and source reads: TruffleHog for leaked credentials, Semgrep for application code issues, and Checkov for CloudFormation misconfigurations. A finding in any one blocks the pipeline before an image is built.
+3. **Build:** CodeBuild builds the order-service Docker image and pushes it to ECR, tagged with the short git commit SHA (not `latest`, since the ECR repository enforces immutable tags)
+4. **Deploy:** a separate CodeBuild project, with its own IAM role that has no ECR access at all, reads the image tags the Build stage produced and runs `helm upgrade --install` for order-service, worker-service, and frontend against the live cluster. Source and Build share the pipeline's artifact store, with the Deploy stage taking both the built image manifest and the full source (for the Helm charts) as separate input artifacts.
 
 All three app images are built from a single ECR repository, differentiated by tag prefix (`order-service-`, `worker-service-`, `frontend-`) rather than separate repositories, since the project only needs one. Image tags combine the short git SHA with the CodeBuild build ID, so manually re-running a pipeline execution against the same commit never collides with ECR's immutable tag setting.
 
@@ -175,6 +185,10 @@ The Deploy stage's CodeBuild role has an IAM permission to describe the cluster,
 ### Network Exposure
 
 The app is reachable only via `kubectl port-forward`, not a public endpoint. This was a deliberate choice, not a limitation worked around later: exposing the frontend and order-service via NodePort with a node's public IP was considered as a way to demo the project live from any machine, but rejected, since it would mean opening inbound access on infrastructure that's otherwise intentionally closed, for a benefit that's better served by a recorded walkthrough. A `scripts/port-forward.sh` script forwards both the frontend and order-service locally, matching the same `localhost` addressing already proven in `docker-compose.local.yml`.
+
+### Automated Pipeline Scanning
+
+Three tools run in the SecurityScans pipeline stage, each gating the pipeline on a finding rather than just reporting one after the fact. TruffleHog scans for leaked credentials and verifies matches against live APIs before reporting them, cutting down on false positives from plain pattern matching. Semgrep runs static analysis against the Node and Express application code using the javascript and security-audit rulesets. Checkov scans the CloudFormation templates for misconfigurations, replacing what was previously a one time manual check with an automated one on every push, using the same accepted exceptions already documented inline in the templates. Each tool runs as its own CodeBuild project with a dedicated IAM role scoped to log writes and source reads only.
 
 ## Engineering Challenges and Design Decisions
 
@@ -223,6 +237,14 @@ An open source reference app was initially considered for the demo application, 
 
 **Helm release naming redundancy, left as-is.** Chart name and release name happen to match for several services (`order-service`, `frontend`), producing redundant resource names like `order-service-order-service` and `frontend-frontend`. Purely cosmetic, no functional impact, and fixing it would mean touching every chart's naming convention for zero real benefit. A deliberate call not to spend time on it given the project's scope and remaining priorities.
 
+**Node memory headroom forced an earlier size bump.** With PostgreSQL, Kafka, and all three app services running, both nodes were already sitting around 85 percent memory before any monitoring stack was added. Rather than wait and risk kube-prometheus-stack failing to schedule, `t3.small` was bumped to `t3.medium` ahead of schedule. Managed nodegroups can't change instance type in place, since it's set in the launch template at creation, but the project's always torn down between sessions habit made this a non issue: the next rebuild just creates the new nodegroup fresh.
+
+**CodePipeline delivers source as a zip, not a git clone.** TruffleHog's git history scan mode failed in CodeBuild with "does not appear to be a git repository." CodePipeline's `CODEPIPELINE` source type hands CodeBuild a zip archive of the checked out files, not an actual `.git` directory, so there's no history to walk. Switched to TruffleHog's filesystem scan mode instead, trading full commit history coverage for actually working given how source is delivered here.
+
+**Setuptools 82 silently broke Semgrep in CI.** Semgrep failed in CodeBuild with `ModuleNotFoundError: No module named 'pkg_resources'`, despite working identically moments earlier in local testing. Setuptools 82.0.0 removed `pkg_resources` outright, and Semgrep's dependency chain still imports it. Fixed by pinning `setuptools<82` explicitly in the buildspec rather than letting `pip install --upgrade` pull whatever the latest version happens to be, the same reproducibility reasoning already applied to every other pinned tool version in the pipeline.
+
+**Considered, then rejected, a self mutating pipeline.** Rather than running `scripts/deploy-pipeline.sh` by hand whenever `pipeline.yaml` changes, the pipeline could in principle deploy changes to its own definition automatically, the pattern AWS CDK Pipelines uses. Rejected for three reasons: the added scope isn't justified at this project's size, the IAM role it would need (`iam:PassRole`, `iam:CreateRole`) is a meaningfully larger blast radius than any other role in this project, and a self mutating stage only applies its own changes on the next trigger, not the run that deployed them, which is a real behavioral gotcha rather than a clean improvement.
+
 ## Planned Improvements
 
 - **Multi-account Landing Zone** (AWS Organizations, Control Tower, SCPs): intentionally out of scope. This project runs in a single account by design; a landing zone is an org-governance pattern that doesn't fit a single-cluster, cost-constrained demo project. Worth a separate, dedicated project rather than bolting it onto this one.
@@ -233,7 +255,8 @@ An open source reference app was initially considered for the demo application, 
 - **Route53**: DNS management, not needed at this project's scale.
 - **ECR lifecycle policy**: expire untagged and old images automatically. Several debugging sessions left behind stray image tags with no cleanup, similar to the lifecycle rule already applied to the S3 artifact bucket.
 - **Automated orphaned-volume cleanup**: an EBS volume tied to PostgreSQL's PVC has been left behind by `eksctl delete cluster` more than once. `scripts/verify-teardown.sh` currently detects this manually; folding detection and cleanup directly into `teardown.sh` would remove the manual step.
-- **Node size**: currently `t3.small`. A bump to `t3.medium` is planned once the kube-prometheus-stack monitoring workload is added, since current memory usage already sits around 85% per node without it.
+- **Automated dependency and tool version updates**: TruffleHog, Semgrep, and Checkov versions are currently pinned by hand in the buildspecs. Dependabot or Renovate would open scheduled pull requests for version bumps instead, with major version bumps flagged for manual review given the risk of breaking changes.
+- **Self mutating pipeline**: worth revisiting at a scale where the added IAM trust (see Engineering Challenges and Design Decisions) is justified by how often the pipeline definition actually changes.
 
 ## AI Diligence Statement
 

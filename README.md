@@ -11,7 +11,7 @@
 [![Grafana](https://img.shields.io/badge/Grafana-F46800?style=flat-square&logo=grafana&logoColor=white)](https://grafana.com/)
 -->
 
-**Current Version:** 0.3.0
+**Current Version:** 0.4.0
 
 **Status:** The full pipeline is live and green end to end. A push to `main` builds three images (order-service, worker-service, frontend), and a separate Deploy stage installs all three via Helm against the live EKS cluster, using the exact image tags the Build stage produced. All five workloads (PostgreSQL, Kafka, order-service, worker-service, frontend) have run together successfully and the full order flow has been verified through the deployed app, not just locally. The app is intentionally not publicly exposed; access is via `kubectl port-forward`, and a recorded walkthrough is planned in place of a live demo, consistent with the project's no-ALB, no-public-exposure design.
 

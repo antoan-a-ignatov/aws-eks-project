@@ -3,8 +3,8 @@ version: 0.2
 phases:
   install:
     commands:
-      - pip install setuptools
-      - pip install semgrep==1.135.0
+      - python3 -m pip install --upgrade pip setuptools
+      - python3 -m pip install semgrep==1.135.0
       - yum install -y jq
   build:
     commands:

@@ -1,0 +1,51 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Permanent observability resources (alert topic, container log group). Survives cluster teardown
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: aws-eks-project
+  AlertEmail:
+    Type: String
+    Description: Mailbox that receives alert emails. Passed at deploy time, never stored in git.
+    AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+    ConstraintDescription: Must be a valid email address.
+
+Resources:
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${ProjectName}-alerts"
+      KmsMasterKeyId: alias/aws/sns
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  AlertEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  ContainerLogGroup:
+    Metadata:
+      checkov:
+        skip:
+          - id: CKV_AWS_158
+            comment: "Logs are encrypted at rest by default and contain no secrets. A customer-managed KMS key adds key management and delayed deletion for little benefit in this demo."
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/${ProjectName}/containers"
+      RetentionInDays: 7
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+Outputs:
+  AlertTopicArn:
+    Description: Topic the Alertmanager IRSA role is allowed to publish to.
+    Value: !Ref AlertTopic
+  ContainerLogGroupName:
+    Description: Log group Fluent Bit writes to (pre-created so the IRSA role needs no create-group permission)
+    Value: !Ref ContainerLogGroup

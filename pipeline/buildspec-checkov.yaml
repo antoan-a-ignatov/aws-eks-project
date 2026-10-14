@@ -6,4 +6,4 @@ phases:
       - pip install checkov==3.3.8
   build:
     commands:
-      - checkov -f infra/cloudformation/foundation.yaml
+      - checkov -d infra/cloudformation --framework cloudformation

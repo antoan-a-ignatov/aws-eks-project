@@ -1,0 +1,19 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: aws-eks-project-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: aws-eks-project
+spec:
+  groups:
+    - name: aws-eks-project.workloads
+      rules:
+        - alert: DeploymentNoAvailableReplicas
+          expr: kube_deployment_status_replicas_available{namespace="default"} == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Deployment {{ $labels.deployment }} has no available replicas"
+            description: "Deployment {{ $labels.deployment }} in namespace {{ $labels.namespace }} has had zero available pods for over a minute."

@@ -1,0 +1,18 @@
+# aws-for-fluent-bit chart 0.2.0, namespace monitoring
+# Ships container logs from the default and kafka namespaces to a pre-created CloudWatch log group.
+
+serviceAccount:
+  create: false
+  name: fluent-bit
+
+input:
+  path: "/var/log/containers/*_default_*.log,/var/log/containers/*_kafka_*.log"
+
+cloudWatch:
+  enabled: false
+
+cloudWatchLogs:
+  enabled: true
+  region: eu-north-1
+  logGroupName: /aws-eks-project/containers
+  autoCreateGroup: false

@@ -15,6 +15,31 @@ iam:
         namespace: external-secrets
       attachPolicyARNs:
         - arn:aws:iam::180571023536:policy/aws-eks-project-db-secret-reader
+    - metadata:
+        name: alertmanager
+        namespace: monitoring
+      attachPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: sns:Publish
+            Resource: arn:aws:sns:eu-north-1:180571023536:aws-eks-project-alerts
+          - Effect: Allow
+            Action:
+              - kms:GenerateDataKey
+              - kms:Decrypt
+            Resource: arn:aws:kms:eu-north-1:180571023536:key/0dac8595-0f09-4a4f-805c-0a419183dfed
+    - metadata:
+        name: fluent-bit
+        namespace: monitoring
+      attachPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: arn:aws:logs:eu-north-1:180571023536:log-group:/aws-eks-project/containers:*
 
 accessConfig:
   authenticationMode: API_AND_CONFIG_MAP

@@ -1,0 +1,64 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aws-eks-project-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/part-of: aws-eks-project
+data:
+  aws-eks-project-overview.json: |
+    {
+      "uid": "aws-eks-project-overview",
+      "title": "aws-eks-project overview",
+      "tags": ["aws-eks-project"],
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "refresh": "30s",
+      "time": {"from": "now-1h", "to": "now"},
+      "templating": {"list": [{"name": "datasource", "label": "Data source", "type": "datasource", "query": "prometheus", "hide": 0, "current": {}, "options": [], "refresh": 1}]},
+      "panels": [
+        {"id": 1, "type": "timeseries", "title": "Node memory used (%)",
+         "datasource": {"type": "prometheus", "uid": "${datasource}"},
+         "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+         "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100}, "overrides": []},
+         "targets": [{"refId": "A", "expr": "(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100", "legendFormat": "{{instance}}"}]},
+        {"id": 2, "type": "timeseries", "title": "Node CPU used (%)",
+         "datasource": {"type": "prometheus", "uid": "${datasource}"},
+         "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+         "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100}, "overrides": []},
+         "targets": [{"refId": "A", "expr": "100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)", "legendFormat": "{{instance}}"}]},
+        {"id": 3, "type": "timeseries", "title": "Pod memory usage vs request",
+         "datasource": {"type": "prometheus", "uid": "${datasource}"},
+         "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+         "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []},
+         "targets": [{"refId": "A", "expr": "sum by (namespace, pod) (container_memory_working_set_bytes{namespace=~\"default|kafka|monitoring\", container!=\"\"}) / sum by (namespace, pod) (kube_pod_container_resource_requests{namespace=~\"default|kafka|monitoring\", resource=\"memory\"})", "legendFormat": "{{namespace}}/{{pod}}"}]},
+        {"id": 4, "type": "timeseries", "title": "Container restarts (cumulative)",
+         "datasource": {"type": "prometheus", "uid": "${datasource}"},
+         "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+         "fieldConfig": {"defaults": {}, "overrides": []},
+         "targets": [{"refId": "A", "expr": "sum by (namespace, pod) (kube_pod_container_status_restarts_total{namespace=~\"default|kafka|monitoring\"})", "legendFormat": "{{namespace}}/{{pod}}"}]},
+        {"id": 5, "type": "timeseries", "title": "Available replicas per Deployment (default)",
+         "datasource": {"type": "prometheus", "uid": "${datasource}"},
+         "gridPos": {"h": 8, "w": 8, "x": 0, "y": 16},
+         "fieldConfig": {"defaults": {}, "overrides": []},
+         "targets": [{"refId": "A", "expr": "kube_deployment_status_replicas_available{namespace=\"default\"}", "legendFormat": "{{deployment}}"}]},
+        {"id": 6, "type": "timeseries", "title": "Pods by phase",
+         "datasource": {"type": "prometheus", "uid": "${datasource}"},
+         "gridPos": {"h": 8, "w": 8, "x": 8, "y": 16},
+         "fieldConfig": {"defaults": {}, "overrides": []},
+         "targets": [{"refId": "A", "expr": "sum by (phase) (kube_pod_status_phase{namespace=~\"default|kafka|monitoring\"})", "legendFormat": "{{phase}}"}]},
+        {"id": 7, "type": "stat", "title": "Prometheus active series",
+         "datasource": {"type": "prometheus", "uid": "${datasource}"},
+         "gridPos": {"h": 8, "w": 4, "x": 16, "y": 16},
+         "fieldConfig": {"defaults": {}, "overrides": []},
+         "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+         "targets": [{"refId": "A", "expr": "sum(prometheus_tsdb_head_series)"}]},
+        {"id": 8, "type": "stat", "title": "Prometheus disk used",
+         "datasource": {"type": "prometheus", "uid": "${datasource}"},
+         "gridPos": {"h": 8, "w": 4, "x": 20, "y": 16},
+         "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+         "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+         "targets": [{"refId": "A", "expr": "sum(prometheus_tsdb_storage_blocks_bytes) + sum(prometheus_tsdb_wal_storage_size_bytes)"}]}
+      ]
+    }

@@ -1,0 +1,41 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base/monitoring
+
+labels:
+  - pairs:
+      environment: prod
+    includeSelectors: false
+
+patches:
+  - target:
+      group: monitoring.coreos.com
+      version: v1
+      kind: PrometheusRule
+      name: aws-eks-project-alerts
+    patch: |-
+      - op: replace
+        path: /spec/groups/0/rules/0/for
+        value: 5m
+      - op: replace
+        path: /spec/groups/0/rules/0/expr
+        value: 'kube_deployment_status_replicas_available{namespace=~"default|external-secrets|kafka"} == 0'
+      - op: add
+        path: /spec/groups/0/rules/0/labels/environment
+        value: prod
+  - target:
+      group: monitoring.coreos.com
+      version: v1
+      kind: Prometheus
+    patch: |-
+      - op: replace
+        path: /spec/retention
+        value: 15d
+      - op: replace
+        path: /spec/retentionSize
+        value: 16GB
+      - op: replace
+        path: /spec/storage/volumeClaimTemplate/spec/resources/requests/storage
+        value: 20Gi

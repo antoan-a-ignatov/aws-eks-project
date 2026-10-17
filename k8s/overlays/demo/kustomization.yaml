@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../dev
+
+patches:
+  - target:
+      group: monitoring.coreos.com
+      version: v1
+      kind: PrometheusRule
+      name: aws-eks-project-alerts
+    patch: |-
+      - op: replace
+        path: /spec/groups/0/rules/0/for
+        value: 1m

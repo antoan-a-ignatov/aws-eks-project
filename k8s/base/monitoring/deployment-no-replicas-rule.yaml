@@ -11,9 +11,9 @@ spec:
       rules:
         - alert: DeploymentNoAvailableReplicas
           expr: kube_deployment_status_replicas_available{namespace="default"} == 0
-          for: 1m
+          for: 10m
           labels:
             severity: critical
           annotations:
             summary: "Deployment {{ $labels.deployment }} has no available replicas"
-            description: "Deployment {{ $labels.deployment }} in namespace {{ $labels.namespace }} has had zero available pods for over a minute."
+            description: "Deployment {{ $labels.deployment }} in namespace {{ $labels.namespace }} has had zero available pods past the alert wait time."

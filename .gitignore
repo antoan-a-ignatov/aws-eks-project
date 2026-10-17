@@ -37,3 +37,6 @@ packaged-*.yml
 *.log
 tmp/
 .tmp/
+
+# Kustomize Helm chart cache (downloaded at build time)
+k8s/base/monitoring/charts/

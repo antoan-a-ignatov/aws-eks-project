@@ -11,6 +11,7 @@ helmCharts:
     includeCRDs: true
 
 resources:
+  - namespace.yaml
   - deployment-no-replicas-rule.yaml
 
 configMapGenerator:

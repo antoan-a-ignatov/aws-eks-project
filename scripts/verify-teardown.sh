@@ -13,11 +13,11 @@ aws ec2 describe-instances \
   --output table
 
 echo ""
-echo "=== Orphaned EBS volumes tagged for this project ==="
+echo "=== Orphaned EBS volumes created by the EBS CSI driver (status available) ==="
 aws ec2 describe-volumes \
   --region eu-north-1 \
-  --filters "Name=tag:KubernetesCluster,Values=aws-eks-project" "Name=status,Values=available" \
-  --query "Volumes[].{ID:VolumeId,Size:Size,State:State,CreatedAt:CreateTime}" \
+  --filters "Name=tag:ebs.csi.aws.com/cluster,Values=true" "Name=status,Values=available" \
+  --query "Volumes[].{ID:VolumeId,Size:Size,PVC:Tags[?Key=='kubernetes.io/created-for/pvc/name']|[0].Value,Namespace:Tags[?Key=='kubernetes.io/created-for/pvc/namespace']|[0].Value,CreatedAt:CreateTime}" \
   --output table
 
 echo ""

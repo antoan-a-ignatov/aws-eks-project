@@ -16,6 +16,8 @@ iam:
       attachPolicyARNs:
         - arn:aws:iam::180571023536:policy/aws-eks-project-db-secret-reader
     - metadata:
+    # eksctl creates the "monitoring" namespace together with the first service account in it.
+    # The namespace is also declared in k8s/base/monitoring/namespace.yaml.
         name: alertmanager
         namespace: monitoring
       attachPolicy:

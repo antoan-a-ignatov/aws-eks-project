@@ -13,6 +13,11 @@
     name: external-secrets
     repo_url: https://charts.external-secrets.io
 
+- name: Add eks Helm repository
+  kubernetes.core.helm_repository:
+    name: eks
+    repo_url: https://aws.github.io/eks-charts
+
 - name: Update Helm repositories
   ansible.builtin.command: helm repo update
   changed_when: false

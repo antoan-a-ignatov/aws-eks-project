@@ -4,6 +4,7 @@ kind: ClusterConfig
 metadata:
   name: aws-eks-project
   region: eu-north-1
+  version: "1.34"
   tags:
     Project: aws-eks-project
 

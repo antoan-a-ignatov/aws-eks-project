@@ -8,6 +8,9 @@ metadata:
   tags:
     Project: aws-eks-project
 
+upgradePolicy:
+  supportType: "STANDARD"
+
 iam:
   withOIDC: true
   serviceAccounts:

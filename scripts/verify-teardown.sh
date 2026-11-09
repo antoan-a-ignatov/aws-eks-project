@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Read-only. Lists anything left behind after teardown; never deletes.
 set -uo pipefail
 
 echo "=== EKS clusters ==="

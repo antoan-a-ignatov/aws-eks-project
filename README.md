@@ -54,7 +54,7 @@ The application follows a simple producer/consumer pattern. A frontend calls an 
 
 At the infrastructure level, CloudFormation provisions the ECR repository, artifact storage, and IAM roles. A second CloudFormation stack provisions the CI/CD pipeline itself, and a third provisions the permanent observability resources (the SNS alert topic, its email subscription, and the CloudWatch log group). EKS is provisioned separately via eksctl, deliberately kept out of CloudFormation so the cluster's expensive, short lived lifecycle (created only during active work) is decoupled from the long lived resources like ECR and IAM.
 
-That split runs through the whole design. Anything that must survive a teardown lives in CloudFormation: the log group keeps its logs between sessions, and the SNS subscription keeps its one-time email confirmation. Anything scoped to a single cluster lives in the eksctl config or in the deploy script, including all three IRSA roles, because each new cluster gets a new OIDC issuer and the role trust policies are bound to it.
+Anything that must survive a teardown lives in CloudFormation: the log group keeps its logs between sessions, and the SNS subscription keeps its one-time email confirmation. Anything scoped to a single cluster lives in the eksctl config or in the deploy script, including all three IRSA roles, because each new cluster gets a new OIDC issuer and the role trust policies are bound to it.
 
 Secrets never enter the cluster as plaintext. AWS Secrets Manager holds the actual credentials, an IAM role scoped to that single secret is attached to a Kubernetes service account through IRSA, and External Secrets Operator syncs the value into a native Kubernetes Secret that the app consumes through a normal env var reference. Nothing in git, in a Helm values file, or in a manifest ever holds a real credential.
 
@@ -95,6 +95,7 @@ flowchart TB
             Graf["Grafana"]
             AM["Alertmanager"]
             FB["Fluent Bit DaemonSet"]
+            KSM["kube-state-metrics<br/>node-exporter"]
         end
         ESO["External Secrets Operator"]
     end
@@ -115,7 +116,7 @@ flowchart TB
     SM -. "IRSA" .-> ESO
     ESO -. "syncs secret" .-> Apps
 
-    Prom -- "scrapes node, pod and<br/>Kubernetes object metrics" --> Cluster
+    KSM -- "node, pod and object metrics" --> Prom
     Prom --> Graf
     Prom -- "firing alerts" --> AM
     AM -- "IRSA: sns:Publish" --> SNS
@@ -131,7 +132,9 @@ The cluster itself is two `t3.medium` on demand nodes in public subnets, with no
 
 A recorded walkthrough of a full session on the live cluster, from `rebuild.sh` through to a verified teardown. No narration; the video has chapters.
 
-[![Watch the demo](docs/screenshots/video-thumbnail.png)](https://youtu.be/AP72i6fMmH8)
+<a href="https://youtu.be/AP72i6fMmH8" target="_blank" rel="noopener noreferrer">
+  <img src="docs/screenshots/video-thumbnail.png" width="500" alt="Watch the demo">
+</a>
 
 The order flow itself, which the video covers in its first half:
 
@@ -155,27 +158,49 @@ The underlying mechanism: worker-service consuming from the `orders` topic indep
 
 ```
 .
-├── ansible/                 Cluster add-on bootstrap playbooks
+├── ansible/
+│   ├── group_vars/              Chart versions and shared variables
+│   ├── inventories/             Localhost inventory (Ansible runs against the kube API, not over SSH)
+│   ├── playbooks/               bootstrap.yml, the cluster add-on entry point
+│   └── roles/                   external-secrets, helm-repos, strimzi-operator
 ├── apps/
-│   ├── api/                 order-service (producer)
-│   ├── frontend/            Static frontend
-│   └── worker/              worker-service (consumer)
+│   ├── api/                     order-service (producer)
+│   ├── frontend/                Static frontend
+│   └── worker/                  worker-service (consumer)
 ├── docs/
-│   └── screenshots/         Screenshots used in this README
+│   └── screenshots/             Screenshots used in this README
 ├── helm/
-│   ├── frontend/            Helm chart for frontend
-│   ├── order-service/       Helm chart for order-service
-│   ├── postgres/            Helm chart for in-cluster Postgres
-│   └── worker-service/      Helm chart for worker-service
+│   ├── frontend/                Helm chart for frontend
+│   ├── order-service/           Helm chart for order-service
+│   ├── postgres/                Helm chart for in-cluster Postgres
+│   └── worker-service/          Helm chart for worker-service
 ├── infra/
-│   ├── cloudformation/      CloudFormation templates (foundation, pipeline, observability)
-│   └── eksctl/              EKS cluster configuration
+│   ├── cloudformation/          foundation.yaml, pipeline.yaml, observability.yaml
+│   └── eksctl/                  cluster.yaml (nodes, addons, IRSA roles, access entries)
 ├── k8s/
-│   ├── base/                Base manifests (secrets, storage, Kafka, monitoring)
-│   └── overlays/            Kustomize overlays (dev, demo, prod)
-├── pipeline/                CodeBuild buildspecs (build, deploy, security scans)
-├── scripts/                 rebuild.sh, deploy-infra.sh, deploy-pipeline.sh, teardown.sh, verify-teardown.sh, port-forward.sh
-└── docker-compose.local.yml Local only stack for testing without AWS
+│   ├── base/
+│   │   ├── kafka/               Kafka cluster and topic
+│   │   ├── monitoring/          Kustomize base: chart values, alert rule, dashboard, namespace
+│   │   ├── secrets/             ClusterSecretStore and ExternalSecret
+│   │   └── storage/             gp3 StorageClass
+│   └── overlays/
+│       ├── demo/                dev plus a 1 minute alert wait, for the recorded walkthrough
+│       ├── dev/                 Default overlay
+│       └── prod/                Illustrative only, validated by build, never deployed
+├── pipeline/
+│   ├── buildspec-build.yaml     Image build and push
+│   ├── buildspec-checkov.yaml   IaC scanning
+│   ├── buildspec-deploy.yaml    Helm deploy to EKS
+│   ├── buildspec-semgrep.yaml   Application code scanning
+│   └── buildspec-trufflehog.yaml Secret scanning
+├── scripts/
+│   ├── deploy-infra.sh          Platform layer onto a fresh cluster
+│   ├── deploy-pipeline.sh       CloudFormation pipeline stack
+│   ├── port-forward.sh          Local access to the apps and monitoring UIs
+│   ├── rebuild.sh               Create the cluster from cluster.yaml
+│   ├── teardown.sh              Remove volume-owning workloads, PVCs, then the cluster
+│   └── verify-teardown.sh       Read-only check for anything left behind
+└── docker-compose.local.yml     Local only stack for testing without AWS
 ```
 
 ## Technology Stack
@@ -267,11 +292,11 @@ Grafana's admin password is generated with `openssl rand` by `deploy-infra.sh` a
 
 Fluent Bit runs as a DaemonSet, one pod per node, reading the container log files from the node and shipping them to a CloudWatch log group. It uses the core `cloudwatch_logs` output plugin rather than the older Go plugin, and the log group is pre-created in CloudFormation with a seven day retention policy, so the group outlives the cluster and Fluent Bit never needs permission to create it.
 
-The tail input is scoped by filename glob to the `default` and `kafka` namespaces only. System namespaces and Fluent Bit's own output are excluded, which keeps the log group readable and the ingestion volume down. CloudWatch Logs charges on ingestion rather than storage, so what gets shipped is the lever that matters.
+The tail input is scoped by filename glob to the `default` and `kafka` namespaces only. System namespaces and Fluent Bit's own output are excluded, which keeps the log group readable and the ingestion volume down. CloudWatch Logs charges far more for ingestion than for storage, so what gets shipped is the lever that matters.
 
 ![CloudWatch Logs Insights query across the container log group](docs/screenshots/cloudwatch-logs-insights.png)
 
-Fluent Bit's Kubernetes filter enriches each record with the pod name, namespace, labels, host node and container image before shipping it, which is what makes a Logs Insights query like the one above useful rather than a wall of undifferentiated text.
+Fluent Bit's Kubernetes filter enriches each record with the pod name, namespace, labels, host node and container image before shipping it, which is what makes the Logs Insights query above possible.
 
 ### Alerting
 
@@ -291,7 +316,7 @@ The Alertmanager view above is the routing design made visible: `KubeMemoryOverc
 
 ![The resolved notification for the same alert](docs/screenshots/alert-email-resolved.png)
 
-`send_resolved` is on, so the recovery is notified as well as the failure. An alert that fires and never clears tells you less than half of what happened.
+`send_resolved` is on, so the recovery is notified as well as the failure.
 
 ### Environment overlays
 
@@ -299,11 +324,11 @@ Three Kustomize overlays sit on top of the rendered stack:
 
 - **dev** is the default, labels everything `environment=dev`, and waits 10 minutes before the deployment alert fires. Long enough that a slow first deploy, where a pod has no available replicas while its image pulls, never pages anyone.
 - **demo** inherits dev and changes exactly one value, shortening that wait to 1 minute, so the full alert cycle can be demonstrated in about two minutes instead of eleven. It exists so the demo never requires editing the real configuration and remembering to change it back.
-- **prod** is illustrative and has never been deployed on this cluster. It waits 5 minutes rather than dev's 10, on the reasoning that production should react faster than a development environment, widens the alert's scope to also watch the `external-secrets` and `kafka` namespaces, and raises Prometheus to 15 day retention on a 20Gi volume. It is validated by `kustomize build` only, and the README would rather say that plainly than imply it runs.
+- **prod** is illustrative and has never been deployed on this cluster. It waits 5 minutes rather than dev's 10, on the reasoning that production should react faster than a development environment, widens the alert's scope to also watch the `external-secrets` and `kafka` namespaces, and raises Prometheus to 15 day retention on a 20Gi volume. It is validated by `kustomize build` only.
 
 ### Capacity, measured
 
-The monitoring stack was sized against real numbers from a live cluster rather than chart defaults, then corrected twice when the first guesses turned out to be wrong.
+The monitoring stack was sized against measurements from a live cluster, then corrected twice when the first guesses turned out to be wrong.
 
 | Stage | Node 1 | Node 2 |
 |---|---|---|
@@ -312,9 +337,11 @@ The monitoring stack was sized against real numbers from a live cluster rather t
 | Platform plus the three app services | 77% | 57% |
 | Same, under sustained traffic | 77% | 58% |
 
-Memory use barely moves under load; the platform itself is what consumes the nodes. The binding constraint turned out not to be memory at all, which is covered under Engineering Challenges.
+Memory use barely moves under load; the platform itself is what consumes the nodes. Memory was not the binding constraint in the end. Pod capacity was, at 17 pods per node.
 
 ## Engineering Challenges and Design Decisions
+
+### Cost and sizing
 
 **Cost driven redesign:**
 The original plan assumed a larger, always available EKS setup. As it became clear the EKS control plane has no free tier at all, the project was redesigned around a minimal footprint: small on demand nodes, no NAT Gateway, no load balancer, and a strict habit of tearing the cluster down between work sessions using create/destroy scripts.
@@ -325,11 +352,15 @@ New AWS accounts are limited to free tier eligible instance types unless certain
 **T3 burstable CPU credits:** 
 T3 instances default to "unlimited" credit mode, which can bill extra if sustained CPU usage exceeds baseline. Nodes are explicitly set to "standard" mode instead, trading potential throttling for predictable cost.
 
-**Bitnami image deprecation:** 
-Bitnami moved most of its container catalog behind a paid tier in 2025, breaking a planned dependency on `bitnami/kafka` for local testing. Local Kafka testing was moved to Apache's own official image instead.
+**Node memory headroom forced an earlier size bump.** With PostgreSQL, Kafka, and all three app services running, both nodes were already sitting around 85 percent memory before any monitoring stack was added. Rather than wait and risk kube-prometheus-stack failing to schedule, `t3.small` was bumped to `t3.medium` ahead of schedule. Managed nodegroups can't change instance type in place, since it's set in the launch template at creation, but the project's always torn down between sessions habit made this a non issue: the next rebuild just creates the new nodegroup fresh.
 
-**Licensing:** 
-An open source reference app was initially considered for the demo application, but lacked a license file. Rather than risk redistributing unlicensed code in a public repo, a small purpose-built app was written instead.
+**The real constraint was pod slots, not memory.** After the monitoring stack and the apps were running, memory sat at 77 and 58 percent, with plenty of room on paper. Pod capacity did not: a `t3.medium` allows 17 pods, and the two nodes were running 17 and 14 of a possible 34. Three free slots across the whole cluster. The stack's own `KubeletTooManyPods` alert flagged it before it caused a failure. A rolling update needs a spare slot to start the new pod before stopping the old one, so the cluster was closer to being unable to deploy than any memory graph suggested. Left as-is for a two node demo cluster; a third node or VPC CNI prefix delegation is the fix at any real scale.
+
+**Kafka was one burst away from being OOM killed.** Under a sustained order load, the broker reached 494Mi against a 512Mi limit, or about 96 percent, having sat at 417Mi idle. It had not been killed, but there was no margin for a heavier burst, and a broker dying mid-demo takes the message flow with it. Raised to a 640Mi request and 768Mi limit, after which the same load peaked at 579Mi. The JVM heap settings were deliberately left alone: the problem was the space outside the heap, not the heap itself.
+
+**EKS version pinning and the extended support surcharge.** The cluster config originally set no Kubernetes version at all, so `eksctl` chose its own default and a rebuild could have landed on a different version than everything was tested against. The version is now pinned to `1.34` in `cluster.yaml`. Separately, clusters created by `eksctl` default to an `EXTENDED` upgrade policy, which keeps a cluster on its current version once standard support ends and bills $0.60 per cluster-hour instead of $0.10. Standard support for 1.34 ends on December 2, 2026. The policy is set to `STANDARD` instead, so AWS upgrades the control plane at end of standard support rather than charging the surcharge. Giving up control of upgrade timing is the right side of that trade here specifically because the cluster is rebuilt from `cluster.yaml` every session and never lives long enough for an automatic upgrade to reach it. The policy can only be set when the cluster is created, and a cluster that has already entered extended support cannot be taken back out of it except by upgrading.
+
+### Cluster and add-ons
 
 **metrics-server: EKS addon over Helm.** Originally planned to install metrics-server via Helm alongside the other add-ons, for consistency. It turns out metrics-server already ships as an EKS-managed addon, and running the Helm chart on top of it caused ownership conflicts on the resources it manages. Switched to relying on the addon, declared in the eksctl cluster config so it's still IaC-tracked, and removed the Helm-based role entirely rather than leaving it disabled in place.
 
@@ -343,13 +374,19 @@ An open source reference app was initially considered for the demo application, 
 
 **Helm does not upgrade CRDs.** After bumping the Strimzi chart version, the operator pod ran fine but the Entity Operator crash looped with 404s against the Kafka API. Helm upgrades a chart's Deployment but doesn't touch CRDs by default. Fixed by applying the matching CRD bundle directly as its own Ansible task, ordered before the Helm install so it can't race the operator's startup again.
 
+**A deploy blocked by a GitHub outage.** A cluster rebuild failed partway through with `504 Gateway Timeout` while Helm fetched the External Secrets chart, which is served from a GitHub release asset rather than a chart registry. GitHub itself was reachable in a browser at the time; only the asset download was failing. A retry a few minutes later worked, and `deploy-infra.sh` is written to be safely re-runnable, so nothing had to be unwound. It is still a single point of failure in the rebuild path that has nothing to do with AWS, and mirroring the charts into ECR is listed under Planned Improvements.
+
+### Cluster lifecycle
+
 **teardown.sh scoped too broadly, then deliberately widened.** The teardown script was originally deleting the CloudFormation foundation stack (ECR, S3, IAM) on every run, not just the EKS cluster. This stayed hidden until CloudFormation's own export-dependency protection blocked a delete and surfaced the mistake, and it was fixed by scoping the script to the eksctl-managed cluster only. Adding a PVC for Prometheus later required widening it again, but in a different direction: the script now uninstalls the volume-owning workloads and deletes the PVCs in `default`, `kafka` and `monitoring` before deleting the cluster, because an EBS volume provisioned through a PVC is only cleaned up when the claim is deleted while the cluster still exists. Every in-cluster step is best-effort and never blocks the cluster deletion, since the cluster disappearing is what actually stops the bill. The script also looks up the kubectl context eksctl created for this specific cluster rather than using whatever context happens to be current, because another cluster is sometimes active on the same machine and a teardown script that deletes workloads is the last place to assume.
 
-**A teardown check that silently passed.** `verify-teardown.sh` reports orphaned EBS volumes after a teardown, and it was filtering on a `KubernetesCluster` tag. The EBS CSI driver does not set that tag; it sets `ebs.csi.aws.com/cluster` along with tags naming the PVC and its namespace. The filter therefore matched nothing and the check reported clean every time, whether or not anything had been left behind. Caught while reading the driver's tagging documentation for an unrelated reason. Fixed to filter on the driver's own tag and to print the originating PVC and namespace for anything it finds. A check that cannot fail is worse than no check, because it is trusted.
+**A teardown check that silently passed.** `verify-teardown.sh` reports orphaned EBS volumes after a teardown, and it was filtering on a `KubernetesCluster` tag. The EBS CSI driver does not set that tag; it sets `ebs.csi.aws.com/cluster` along with tags naming the PVC and its namespace. The filter therefore matched nothing and the check reported clean every time, whether or not anything had been left behind. Caught while reading the driver's tagging documentation for an unrelated reason. Fixed to filter on the driver's own tag and to print the originating PVC and namespace for anything it finds.
 
 **Postgres data does not persist across sessions.** Postgres runs on an EBS-backed PVC, which gets destroyed along with the cluster on every teardown, by design, since the cluster itself only exists during active work blocks. Accepted deliberately: a demo dataset doesn't need to survive between sessions, and keeping storage ephemeral avoids extra EBS spend on top of the compute budget.
 
 **Rebuilding the cluster does not restore supporting infrastructure.** `eksctl` recreates nodes, addons, and the EKS access entry, but ESO, the secrets sync, PostgreSQL, and Kafka all have to be reapplied by hand every session, since none of them are addons. This stayed implicit until a full pipeline run failed against a freshly rebuilt cluster with nothing but bare nodes on it. Fixed with `scripts/deploy-infra.sh`, which reapplies all of it in the correct order, with explicit wait conditions so the app layer can never race ahead of dependencies it needs.
+
+### CI/CD pipeline
 
 **Unquoted colons broke buildspec YAML twice.** A shell command like `cut -d: -f1` contains a colon immediately followed by a space, which YAML's plain scalar syntax treats as an ambiguous mapping key, not literal text. This surfaced first in the Deploy stage's buildspec, then again in the Build stage's buildspec when a later fix reintroduced the same pattern without quoting. Fixed by wrapping any buildspec command containing a bare `: ` in double quotes, and validating buildspecs with an actual YAML parser rather than eyeballing them going forward.
 
@@ -357,33 +394,34 @@ An open source reference app was initially considered for the demo application, 
 
 **CodePipeline needs an explicit primary source with multiple input artifacts.** The Deploy stage needs both the built image manifest and the repository's Helm charts, so it was given two input artifacts. CodeBuild silently failed to find its own buildspec until `PrimarySource` was set explicitly, telling CodePipeline which of the two artifacts to check out as the working directory.
 
-**order-service's real dependency didn't match its documented one.** The architecture describes order-service as Kafka-producer-only, with no database access. In practice, the code connects to PostgreSQL on startup regardless. This only surfaced once the app was actually deployed and crash-looping, not from a code review. The Helm chart was updated to match what the application actually does, rather than changing the app to match the diagram.
-
 **GitHub App installation vs. authorization.** The CodeConnections GitHub link showed as "Available" and the pipeline ran once on creation, but never triggered on subsequent pushes. The cause: the AWS Connector for GitHub app was authorized but never actually installed to the repository, two distinct steps on GitHub's side. Installing it directly resolved automatic triggering.
 
-**Helm release naming redundancy, left as-is.** Chart name and release name happen to match for several services (`order-service`, `frontend`), producing redundant resource names like `order-service-order-service` and `frontend-frontend`. Purely cosmetic, no functional impact, and fixing it would mean touching every chart's naming convention for zero real benefit. A deliberate call not to spend time on it given the project's scope and remaining priorities.
+**CodePipeline delivers source as a zip, not a git clone.** TruffleHog's git history scan mode failed in CodeBuild with "does not appear to be a git repository." CodePipeline's `CODEPIPELINE` source type hands CodeBuild a zip archive of the checked out files, not an actual `.git` directory, so there's no history to walk. Switched to TruffleHog's filesystem scan mode instead, trading full commit history coverage for actually working given how source is delivered here.
 
-**Node memory headroom forced an earlier size bump.** With PostgreSQL, Kafka, and all three app services running, both nodes were already sitting around 85 percent memory before any monitoring stack was added. Rather than wait and risk kube-prometheus-stack failing to schedule, `t3.small` was bumped to `t3.medium` ahead of schedule. Managed nodegroups can't change instance type in place, since it's set in the launch template at creation, but the project's always torn down between sessions habit made this a non issue: the next rebuild just creates the new nodegroup fresh.
-
-**The real constraint was pod slots, not memory.** After the monitoring stack and the apps were running, memory sat at 77 and 58 percent, with plenty of room on paper. Pod capacity did not: a `t3.medium` allows 17 pods, a limit set by how many IP addresses the VPC CNI can attach to that instance type, and the two nodes were running 17 and 14 of a possible 34. Three free slots across the whole cluster. The stack's own `KubeletTooManyPods` alert flagged it before it caused a failure, which is exactly what it exists for. It matters because a rolling update needs a spare slot to start the new pod before stopping the old one, so the cluster was closer to being unable to deploy than any memory graph suggested. Left as-is for a two node demo cluster; a third node or VPC CNI prefix delegation is the fix at any real scale.
-
-**Grafana was being OOM killed twice over, and the symptom looked like a network problem.** The first deploy of the monitoring stack left Grafana at 1/3 containers ready and crash looping. Both of its sidecars, the ones that load dashboards and datasources from ConfigMaps, were exiting with code 137 against a 64Mi limit that had been estimated rather than measured. Raising them to 256Mi fixed those, but the main Grafana container then started dying too, and this time the symptom was indirect: `kubectl port-forward` would drop with "connection refused" and "lost connection to pod" partway through loading a dashboard. That reads like a networking fault, and it is actually a container being killed and restarted underneath the forward. Grafana was using 252Mi against a 256Mi limit while idle, so opening the UI was enough to push it over. Raised to a 512Mi limit with a 256Mi request, the request having been set below actual usage, which is its own small mistake: the scheduler was reserving less than the pod was always going to use.
-
-**`deploy-infra.sh` reported success while Grafana was crash looping.** The script waits on `kubectl wait --for=condition=Available deployment --all` before declaring the stack ready, and that wait passed during the OOM problem above. A Deployment can report Available between container restarts, so the condition was true at the moment it was checked and false seconds later. The script's success message means the apply completed and the waits returned, not that every pod is healthy, and the pod list is still the real check.
-
-**Amazon SNS rejects a subject over 100 characters, and Alertmanager's default subject is longer.** The first alert fired correctly, routed correctly, and failed to deliver with `unexpected status code 400: Invalid parameter: Subject`. The 400 was informative in itself: the request had reached SNS and been authenticated, so IRSA was working and the problem was one field. Alertmanager's default subject template appends the labels shared across the alert group, and with everything kube-state-metrics attaches that comfortably exceeds SNS's limit. Fixed with an explicit short subject template built from the alert status, name and environment. Two details worth recording: the stack's own `AlertmanagerFailedToSendAlerts` rule fired while this was broken, so the monitoring noticed its own delivery failure, and a static subject string was the first fix before being replaced with a templated one, because a hardcoded `[FIRING]` would have labelled the recovery email as a failure.
-
-**A Postgres health probe was failing its login every five seconds and nothing noticed.** Found by accident while reading CloudWatch to confirm Fluent Bit worked: the Postgres log contained `FATAL: role "root" does not exist`, repeating on the readiness and liveness probe intervals. The probes ran `pg_isready -U "$(POSTGRES_USER)"`, and the kubelet only expands `$(VAR)` in a probe command from environment variables with a literal value in the pod spec. `POSTGRES_USER` comes from a Secret, so it expanded to nothing, libpq fell back to the container's OS user, and Postgres rejected the login every time. The probes still passed, because `pg_isready` checks that the server is accepting connections rather than that the credentials work, so the pod was healthy and the failure was invisible outside the logs. Fixed by running the probe through a shell, where the container's real environment is available, and passing the database explicitly. Worth the entry less for the bug than for how it was found: the logging pipeline earned its keep on its first day by surfacing something no dashboard was watching for.
-
-**Kafka was one burst away from being OOM killed.** Under a sustained order load, the broker reached 494Mi against a 512Mi limit, or about 96 percent, having sat at 417Mi idle. It had not been killed, but there was no margin for a heavier burst, and a broker dying mid-demo takes the message flow with it. Raised to a 640Mi request and 768Mi limit, after which the same load peaked at 579Mi. The JVM heap settings were deliberately left alone: the problem was the space outside the heap, not the heap itself.
-
-**Chart inflation over post-rendering, decided by checking rather than habit.** Patching a Helm chart's output with Kustomize is conventionally done with a post-renderer script. Checking the current state of both tools first turned out to matter: Helm 4, released in late 2025, no longer accepts an executable path for `--post-renderer` and requires a signed plugin instead, so the conventional approach was already on a deprecation path. Kustomize's own `helmCharts` generator runs `helm template` in a subprocess and works identically on Helm 3 and 4. It also meant the alert rule and the dashboard could be built in the same pass as the chart rather than applied separately. The cost is Helm's release tracking and `helm rollback`, which are worth little on a cluster rebuilt from scratch each session.
-
-**A deploy blocked by a GitHub outage.** A cluster rebuild failed partway through with `504 Gateway Timeout` while Helm fetched the External Secrets chart, which is served from a GitHub release asset rather than a chart registry. GitHub itself was reachable in a browser at the time; only the asset download was failing. A retry a few minutes later worked, and `deploy-infra.sh` is written to be safely re-runnable, so nothing had to be unwound. It is still a single point of failure in the rebuild path that has nothing to do with AWS, and mirroring the charts into ECR is listed under Planned Improvements.
+**Setuptools 82 silently broke Semgrep in CI.** Semgrep failed in CodeBuild with `ModuleNotFoundError: No module named 'pkg_resources'`, despite working identically moments earlier in local testing. Setuptools 82.0.0 removed `pkg_resources` outright, and Semgrep's dependency chain still imports it. Fixed by pinning `setuptools<82` explicitly in the buildspec rather than letting `pip install --upgrade` pull whatever the latest version happens to be, the same reproducibility reasoning already applied to every other pinned tool version in the pipeline.
 
 **Considered, then rejected, a self mutating pipeline.** Rather than running `scripts/deploy-pipeline.sh` by hand whenever `pipeline.yaml` changes, the pipeline could in principle deploy changes to its own definition automatically, the pattern AWS CDK Pipelines uses. Rejected for three reasons: the added scope isn't justified at this project's size, the IAM role it would need (`iam:PassRole`, `iam:CreateRole`) is a meaningfully larger blast radius than any other role in this project, and a self mutating stage only applies its own changes on the next trigger, not the run that deployed them, which is a real behavioral gotcha rather than a clean improvement.
 
-**EKS version pinning and the extended support surcharge.** The cluster config originally set no Kubernetes version at all, so `eksctl` chose its own default and a rebuild could have landed on a different version than everything was tested against. The version is now pinned to `1.34` in `cluster.yaml`. Separately, clusters created by `eksctl` default to an `EXTENDED` upgrade policy, which keeps a cluster on its current version once standard support ends and bills $0.60 per cluster-hour instead of $0.10. Standard support for 1.34 ends on December 2, 2026. The policy is set to `STANDARD` instead, so AWS upgrades the control plane at end of standard support rather than charging the surcharge. Giving up control of upgrade timing is the right side of that trade here specifically because the cluster is rebuilt from `cluster.yaml` every session and never lives long enough for an automatic upgrade to reach it. Two constraints are worth recording: the policy can only be set when the cluster is created, and a cluster that has already entered extended support cannot be taken back out of it except by upgrading.
+### Observability
+
+**Grafana was being OOM killed twice over, and the symptom looked like a network problem.** The first deploy of the monitoring stack left Grafana at 1/3 containers ready and crash looping. Both of its sidecars, the ones that load dashboards and datasources from ConfigMaps, were exiting with code 137 against a 64Mi limit that had been estimated rather than measured. Raising them to 256Mi fixed those, but the main Grafana container then started dying too, and this time the symptom was indirect: `kubectl port-forward` would drop with "connection refused" and "lost connection to pod" partway through loading a dashboard. That reads like a networking fault, and it is actually a container being killed and restarted underneath the forward. Grafana was using 252Mi against a 256Mi limit while idle, so opening the UI was enough to push it over. Raised to a 512Mi limit with a 256Mi request.
+
+**`deploy-infra.sh` reported success while Grafana was crash looping.** The script waits on `kubectl wait --for=condition=Available deployment --all` before declaring the stack ready, and that wait passed during the OOM problem above. A Deployment can report Available between container restarts, so the condition was true at the moment it was checked and false seconds later. The script's success message means the apply completed and the waits returned, not that every pod is healthy, and the pod list is still the real check.
+
+**Amazon SNS rejects a subject over 100 characters, and Alertmanager's default subject is longer.** The first alert fired correctly, routed correctly, and failed to deliver with `unexpected status code 400: Invalid parameter: Subject`. A 400 meant the request had reached SNS and been authenticated, so IRSA was working and the problem was one field. Alertmanager's default subject template appends the labels shared across the alert group, and with everything kube-state-metrics attaches that comfortably exceeds SNS's limit. Fixed with an explicit short subject template built from the alert status, name and environment. The stack's own `AlertmanagerFailedToSendAlerts` rule fired while this was broken, so the monitoring noticed its own delivery failure. A static subject string was the first fix, replaced with a templated one because a hardcoded `[FIRING]` would have labelled the recovery email as a failure.
+
+**A Postgres health probe was failing its login every five seconds and nothing noticed.** Found by accident while reading CloudWatch to confirm Fluent Bit worked: the Postgres log contained `FATAL: role "root" does not exist`, repeating on the readiness and liveness probe intervals. The probes ran `pg_isready -U "$(POSTGRES_USER)"`, and the kubelet only expands `$(VAR)` in a probe command from environment variables with a literal value in the pod spec. `POSTGRES_USER` comes from a Secret, so it expanded to nothing, libpq fell back to the container's OS user, and Postgres rejected the login every time. The probes still passed, because `pg_isready` checks that the server is accepting connections rather than that the credentials work, so the pod was healthy and the failure was invisible outside the logs. Fixed by running the probe through a shell, where the container's real environment is available, and passing the database explicitly.
+
+**Chart inflation over post-rendering.** Patching a Helm chart's output with Kustomize is conventionally done with a post-renderer script. Checking the current state of both tools first turned out to matter: Helm 4, released in late 2025, no longer accepts an executable path for `--post-renderer` and requires a signed plugin instead, so the conventional approach was already on a deprecation path. Kustomize's own `helmCharts` generator runs `helm template` in a subprocess and works identically on Helm 3 and 4. It also meant the alert rule and the dashboard could be built in the same pass as the chart rather than applied separately. The cost is Helm's release tracking and `helm rollback`, which are worth little on a cluster rebuilt from scratch each session.
+
+### Application and conventions
+
+**Licensing:** 
+An open source reference app was initially considered for the demo application, but lacked a license file. Rather than risk redistributing unlicensed code in a public repo, a small purpose-built app was written by Claude instead.
+
+**order-service's real dependency didn't match its documented one.** The architecture describes order-service as Kafka-producer-only, with no database access. In practice, the code connects to PostgreSQL on startup regardless. This only surfaced once the app was actually deployed and crash-looping, not from a code review. The Helm chart was updated to match what the application actually does, rather than changing the app to match the diagram.
+
+**Helm release naming redundancy, left as-is.** Chart name and release name happen to match for several services (`order-service`, `frontend`), producing redundant resource names like `order-service-order-service` and `frontend-frontend`. Purely cosmetic, no functional impact, and fixing it would mean touching every chart's naming convention for zero real benefit. A deliberate call not to spend time on it given the project's scope and remaining priorities.
 
 ## Planned Improvements
 
